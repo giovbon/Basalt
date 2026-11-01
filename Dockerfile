@@ -19,6 +19,7 @@ RUN go mod download
 
 COPY . .
 
+# 1. Ajustado o fallback de compilação de './cmd/notediscovery' para '.'
 RUN if [ -f "bin/notediscovery-${TARGETARCH}" ]; then \
         echo "Usando binario pre-compilado para ${TARGETARCH}"; \
         cp "bin/notediscovery-${TARGETARCH}" /notediscovery; \
@@ -28,7 +29,7 @@ RUN if [ -f "bin/notediscovery-${TARGETARCH}" ]; then \
             -trimpath \
             -ldflags="-s -w" \
             -o /notediscovery \
-            ./cmd/notediscovery; \
+            . ; \
     fi
 
 # -----------------------------------------------------------------------------
@@ -46,7 +47,10 @@ COPY --from=builder /notediscovery /app/notediscovery
 COPY --from=builder /src/config.yaml /app/config.yaml
 COPY --from=builder /src/VERSION /app/VERSION
 
-RUN mkdir -p /app/data && chown -R appuser:appgroup /app
+# 2. Adicionado 'chmod +x' e garantida a permissão completa do appuser
+RUN chmod +x /app/notediscovery && \
+    mkdir -p /app/data && \
+    chown -R appuser:appgroup /app
 
 USER appuser
 
