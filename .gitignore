@@ -1,4 +1,5 @@
 notediscovery
+bin/
 data/
 test_data/
 *.exe
