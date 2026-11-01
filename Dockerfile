@@ -9,23 +9,25 @@ WORKDIR /src
 
 ENV GOTOOLCHAIN=auto
 
-ARG TARGETOS
+# Definido linux como padrão para TARGETOS
+ARG TARGETOS=linux
 ARG TARGETARCH
 
 RUN apk add --no-cache ca-certificates tzdata
 
 COPY go.mod go.sum ./
-RUN go mod download
+RUN mod download
 
 COPY . .
 
-# 1. Ajustado o fallback de compilação de './cmd/notediscovery' para '.'
-RUN if [ -f "bin/notediscovery-${TARGETARCH}" ]; then \
-        echo "Usando binario pre-compilado para ${TARGETARCH}"; \
-        cp "bin/notediscovery-${TARGETARCH}" /notediscovery; \
+# 1. Ajustado para detectar a arquitetura nativa se TARGETARCH estiver vazio
+RUN ARCH="${TARGETARCH:-$(go env GOARCH)}" && \
+    if [ -f "bin/notediscovery-${ARCH}" ]; then \
+        echo "Usando binario pre-compilado para ${ARCH}"; \
+        cp "bin/notediscovery-${ARCH}" /notediscovery; \
     else \
-        echo "Compilando para ${TARGETOS}/${TARGETARCH}"; \
-        CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build \
+        echo "Compilando nativamente para ${TARGETOS}/${ARCH}"; \
+        CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${ARCH} go build \
             -trimpath \
             -ldflags="-s -w" \
             -o /notediscovery \
