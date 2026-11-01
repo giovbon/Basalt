@@ -24,11 +24,11 @@ jobs:
           cache: true
 
       - name: Build Multi-Arch Binaries
-        run: |
-          mkdir -p bin
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o bin/notediscovery-amd64 ./cmd/notediscovery
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o bin/notediscovery-arm64 ./cmd/notediscovery
-          ls -lh bin/
+            run: |
+              mkdir -p bin
+              CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o bin/notediscovery-amd64 ./cmd
+              CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o bin/notediscovery-arm64 ./cmd
+              ls -lh bin/
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
