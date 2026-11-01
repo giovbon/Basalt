@@ -16,7 +16,7 @@ ARG TARGETARCH
 RUN apk add --no-cache ca-certificates tzdata
 
 COPY go.mod go.sum ./
-RUN mod download
+RUN go mod download
 
 COPY . .
 
