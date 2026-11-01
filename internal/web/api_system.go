@@ -149,9 +149,10 @@ func (h *SystemHandler) GetThemeCSS(w http.ResponseWriter, r *http.Request) {
 		RespondError(w, http.StatusNotFound, "Theme not found")
 		return
 	}
-	w.Header().Set("Content-Type", "text/css; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(css))
+	RespondJSON(w, http.StatusOK, map[string]any{
+		"css":      css,
+		"theme_id": themeID,
+	})
 }
 
 type LocaleMeta struct {
@@ -163,7 +164,7 @@ type LocaleMeta struct {
 func (h *SystemHandler) ListLocales(w http.ResponseWriter, r *http.Request) {
 	entries, err := fs.ReadDir(h.assetsFS, "locales")
 	if err != nil {
-		RespondJSON(w, http.StatusOK, []any{})
+		RespondJSON(w, http.StatusOK, map[string]any{"locales": []LocaleMeta{}})
 		return
 	}
 
@@ -204,7 +205,7 @@ func (h *SystemHandler) ListLocales(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	RespondJSON(w, http.StatusOK, locales)
+	RespondJSON(w, http.StatusOK, map[string]any{"locales": locales})
 }
 
 var localeRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)

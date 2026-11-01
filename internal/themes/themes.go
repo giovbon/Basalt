@@ -95,7 +95,7 @@ func ListThemes(fsys fs.FS) ([]ThemeInfo, error) {
 
 		themes = append(themes, ThemeInfo{
 			ID:   id,
-			Name: name,
+			Name: icon + " " + name,
 			Type: themeType,
 			Icon: icon,
 		})

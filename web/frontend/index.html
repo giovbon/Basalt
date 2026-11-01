@@ -1860,8 +1860,8 @@
                                     </select>
                                 </div>
                                 
-                                <!-- Language -->
-                                <div class="mb-4">
+                                <!-- Language (only shown if multiple locales are available) -->
+                                <div class="mb-4" x-show="availableLocales && availableLocales.length > 1">
                                     <label class="block text-xs font-medium mb-2" style="color: var(--text-secondary);" x-text="t('language.title')">Language</label>
                                     <select 
                                         x-model="currentLocale"
