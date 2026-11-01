@@ -7,6 +7,8 @@ FROM golang:1.22-alpine AS builder
 
 WORKDIR /src
 
+ENV GOTOOLCHAIN=auto
+
 # Instala certificados para dependências caso necessário
 RUN apk add --no-cache ca-certificates tzdata
 
