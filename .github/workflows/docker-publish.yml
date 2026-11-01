@@ -26,9 +26,13 @@ jobs:
       - name: Build Multi-Arch Binaries
         run: |
           mkdir -p bin
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o bin/notediscovery-amd64 .
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o bin/notediscovery-arm64 .
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o bin/notediscovery-amd64 ./cmd/notediscovery
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o bin/notediscovery-arm64 ./cmd/notediscovery
           ls -lh bin/
+          # Falha o workflow se algum artefato nao for um executavel ELF
+          for f in bin/notediscovery-*; do
+            head -c 4 "$f" | grep -q ELF || { echo "ERRO: $f nao e um binario ELF"; exit 1; }
+          done
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3

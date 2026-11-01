@@ -1,4 +1,5 @@
-notediscovery
+# Binário compilado na raiz (o "/" evita ignorar também cmd/notediscovery/)
+/notediscovery
 bin/
 data/
 test_data/

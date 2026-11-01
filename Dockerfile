@@ -21,7 +21,8 @@ RUN go mod download
 COPY . .
 
 # 1. Ajustado para detectar a arquitetura nativa se TARGETARCH estiver vazio
-RUN ARCH="${TARGETARCH:-$(go env GOARCH)}" && \
+RUN set -e; \
+    ARCH="${TARGETARCH:-$(go env GOARCH)}"; \
     if [ -f "bin/notediscovery-${ARCH}" ]; then \
         echo "Usando binario pre-compilado para ${ARCH}"; \
         cp "bin/notediscovery-${ARCH}" /notediscovery; \
@@ -31,8 +32,14 @@ RUN ARCH="${TARGETARCH:-$(go env GOARCH)}" && \
             -trimpath \
             -ldflags="-s -w" \
             -o /notediscovery \
-            . ; \
-    fi
+            ./cmd/notediscovery; \
+    fi; \
+    if ! head -c 4 /notediscovery | grep -q "ELF"; then \
+        echo "ERRO: /notediscovery nao e um executavel ELF."; \
+        echo "O pacote main nao foi compilado - verifique o caminho ./cmd/notediscovery no Dockerfile."; \
+        exit 1; \
+    fi; \
+    echo "OK: binario ELF gerado para ${TARGETOS:-linux}/${ARCH}"
 
 # -----------------------------------------------------------------------------
 # Stage 2: Runtime Minimal
