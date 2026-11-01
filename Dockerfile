@@ -1,13 +1,17 @@
 # syntax=docker/dockerfile:1
 
 # -----------------------------------------------------------------------------
-# Stage 1: Build
+# Stage 1: Build (executa nativo no host do builder para velocidade máxima)
 # -----------------------------------------------------------------------------
-FROM golang:1.22-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.22-alpine AS builder
 
 WORKDIR /src
 
 ENV GOTOOLCHAIN=auto
+
+# Argumentos fornecidos automaticamente pelo Docker Buildx
+ARG TARGETOS
+ARG TARGETARCH
 
 # Instala certificados para dependências caso necessário
 RUN apk add --no-cache ca-certificates tzdata
@@ -19,15 +23,15 @@ RUN go mod download
 # Copia todo o código-fonte (incluindo web/ embutido via go:embed)
 COPY . .
 
-# Compila binário estático e enxuto
-RUN CGO_ENABLED=0 GOOS=linux go build \
+# Compilação cruzada nativa do Go (sem emulação QEMU lenta)
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build \
     -trimpath \
     -ldflags="-s -w" \
     -o /notediscovery \
     ./cmd/notediscovery
 
 # -----------------------------------------------------------------------------
-# Stage 2: Runtime Minimal
+# Stage 2: Runtime Minimal (arquitetura de destino)
 # -----------------------------------------------------------------------------
 FROM alpine:3.20
 
