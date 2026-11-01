@@ -242,13 +242,32 @@ func (v *Vault) FolderNameConflict(folderPath string) string {
 	return ""
 }
 
+// ParseTags extracts tags from a note's YAML frontmatter.
+//
+// Supported shapes (key matched case-insensitively, "tags" or "tag"):
+//
+//	tags: [a, b]
+//	tags: a
+//	tags:
+//	  - a
+//
+// It tolerates a UTF-8 BOM and blank lines before the opening "---" (common
+// in files saved by Windows editors) and strips quotes around values, so the
+// same note parses identically no matter which editor wrote it.
 func ParseTags(content string) []string {
+	// Windows editors often prepend a UTF-8 BOM. TrimSpace does NOT remove
+	// U+FEFF (it is a format character, not whitespace), so strip it first —
+	// otherwise every check below fails and the note reports zero tags.
+	content = strings.TrimPrefix(content, "\ufeff")
+
+	// Parse from the trimmed content so leading/trailing blank lines cannot
+	// break the first-line "---" check.
 	trimmed := strings.TrimSpace(content)
 	if !strings.HasPrefix(trimmed, "---") {
 		return []string{}
 	}
 
-	lines := strings.Split(content, "\n")
+	lines := strings.Split(trimmed, "\n")
 	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
 		return []string{}
 	}
@@ -268,35 +287,55 @@ func ParseTags(content string) []string {
 	var rawTags []string
 	inTagsList := false
 
+	// Normalize one raw tag value: trim, drop surrounding quotes, lowercase.
+	cleanTag := func(t string) string {
+		t = strings.ToLower(strings.TrimSpace(t))
+		if len(t) >= 2 {
+			if q := t[0]; (q == '"' || q == '\'') && t[len(t)-1] == q {
+				t = strings.TrimSpace(t[1 : len(t)-1])
+			}
+		}
+		return t
+	}
+
 	for _, line := range fmLines {
 		stripped := strings.TrimSpace(line)
-		if strings.HasPrefix(stripped, "tags:") {
-			rest := strings.TrimSpace(strings.TrimPrefix(stripped, "tags:"))
+
+		if !inTagsList {
+			key, rest, hasKey := strings.Cut(stripped, ":")
+			if !hasKey {
+				continue
+			}
+			key = strings.ToLower(strings.TrimSpace(key))
+			if key != "tags" && key != "tag" {
+				continue
+			}
+
+			rest = strings.TrimSpace(rest)
 			if strings.HasPrefix(rest, "[") && strings.HasSuffix(rest, "]") {
-				inner := rest[1 : len(rest)-1]
-				parts := strings.Split(inner, ",")
-				for _, p := range parts {
-					t := strings.ToLower(strings.TrimSpace(p))
-					if t != "" {
+				for _, p := range strings.Split(rest[1:len(rest)-1], ",") {
+					if t := cleanTag(p); t != "" {
 						rawTags = append(rawTags, t)
 					}
 				}
 				break
 			} else if rest != "" {
-				rawTags = append(rawTags, strings.ToLower(rest))
-				break
-			} else {
-				inTagsList = true
-			}
-		} else if inTagsList {
-			if strings.HasPrefix(stripped, "-") {
-				t := strings.TrimSpace(strings.TrimPrefix(stripped, "-"))
-				if t != "" {
-					rawTags = append(rawTags, strings.ToLower(t))
+				if t := cleanTag(rest); t != "" {
+					rawTags = append(rawTags, t)
 				}
-			} else if stripped != "" && !strings.HasPrefix(stripped, "#") {
 				break
 			}
+			inTagsList = true
+			continue
+		}
+
+		// Inside a multiline "tags:" block.
+		if strings.HasPrefix(stripped, "-") {
+			if t := cleanTag(strings.TrimPrefix(stripped, "-")); t != "" {
+				rawTags = append(rawTags, t)
+			}
+		} else if stripped != "" && !strings.HasPrefix(stripped, "#") {
+			break
 		}
 	}
 

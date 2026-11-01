@@ -2491,14 +2491,20 @@ function noteApp() {
             return modified.toLocaleDateString(this.currentLocale, { month: 'short', day: 'numeric' });
         },
         
-        // Parse tags from markdown content (matches backend logic)
+        // Parse tags from markdown content (matches backend logic — keep in
+        // sync with vault.ParseTags): "tags:"/"tag:" key is case-insensitive,
+        // values may be inline arrays, single values or YAML lists, quotes are
+        // stripped, and a UTF-8 BOM / blank lines before "---" are tolerated
+        // (String.trim() removes U+FEFF, which is why parsing runs on the
+        // trimmed content below).
         parseTagsFromContent(content) {
-            if (!content || !content.trim().startsWith('---')) {
-                return [];
-            }
+            if (!content) return [];
             
             try {
-                const lines = content.split('\n');
+                const trimmed = content.trim();
+                if (!trimmed.startsWith('---')) return [];
+                
+                const lines = trimmed.split('\n');
                 if (lines[0].trim() !== '---') return [];
                 
                 // Find closing ---
@@ -2516,32 +2522,48 @@ function noteApp() {
                 const tags = [];
                 let inTagsList = false;
                 
+                // Normalize one raw tag value: trim, drop quotes, lowercase.
+                const cleanTag = (t) => {
+                    t = (t || '').trim().toLowerCase();
+                    if (t.length >= 2 && (t[0] === '"' || t[0] === "'") && t[t.length - 1] === t[0]) {
+                        t = t.slice(1, -1).trim();
+                    }
+                    return t;
+                };
+                
                 for (const line of frontmatterLines) {
                     const stripped = line.trim();
                     
-                    // Check for inline array: tags: [tag1, tag2]
-                    if (stripped.startsWith('tags:')) {
-                        const rest = stripped.substring(5).trim();
+                    if (!inTagsList) {
+                        const cut = stripped.indexOf(':');
+                        if (cut === -1) continue;
+                        const key = stripped.substring(0, cut).trim().toLowerCase();
+                        if (key !== 'tags' && key !== 'tag') continue;
+                        
+                        const rest = stripped.substring(cut + 1).trim();
+                        
+                        // Inline array: tags: [tag1, tag2]
                         if (rest.startsWith('[') && rest.endsWith(']')) {
-                            const tagsStr = rest.substring(1, rest.length - 1);
-                            const rawTags = tagsStr.split(',').map(t => t.trim());
-                            tags.push(...rawTags.filter(t => t).map(t => t.toLowerCase()));
+                            for (const p of rest.substring(1, rest.length - 1).split(',')) {
+                                const t = cleanTag(p);
+                                if (t) tags.push(t);
+                            }
                             break;
                         } else if (rest) {
-                            tags.push(rest.toLowerCase());
-                            break;
-                        } else {
-                            inTagsList = true;
-                        }
-                    } else if (inTagsList) {
-                        if (stripped.startsWith('-')) {
-                            const tag = stripped.substring(1).trim();
-                            if (tag && !tag.startsWith('#')) {
-                                tags.push(tag.toLowerCase());
-                            }
-                        } else if (stripped && !stripped.startsWith('#')) {
+                            const t = cleanTag(rest);
+                            if (t) tags.push(t);
                             break;
                         }
+                        inTagsList = true;
+                        continue;
+                    }
+                    
+                    // Inside a multiline "tags:" block.
+                    if (stripped.startsWith('-')) {
+                        const t = cleanTag(stripped.substring(1));
+                        if (t && !t.startsWith('#')) tags.push(t);
+                    } else if (stripped && !stripped.startsWith('#')) {
+                        break;
                     }
                 }
                 
@@ -4926,7 +4948,10 @@ function noteApp() {
                 // Close mobile sidebar when a note is selected
                 this.mobileSidebarOpen = false;
 
-                const response = await fetch(`/api/notes/${encodeVaultPath(notePath)}`);
+                // include_backlinks=true: the backend only computes backlinks when
+                // this flag is present (they require a full vault scan, so they're
+                // opt-in per request). Without it the panel always shows empty.
+                const response = await fetch(`/api/notes/${encodeVaultPath(notePath)}?include_backlinks=true`);
                 
                 // Check if note exists
                 if (!response.ok) {
