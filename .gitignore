@@ -1,0 +1,6 @@
+notediscovery
+data/
+test_data/
+*.exe
+*.test
+.DS_Store

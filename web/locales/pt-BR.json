@@ -1,0 +1,345 @@
+{
+  "_meta": {
+    "code": "pt-BR",
+    "name": "Português (Brasil)",
+    "flag": "🇧🇷"
+  },
+  "app": {
+    "tagline": "Sua Base de Conhecimento Auto-Hosteada"
+  },
+  "common": {
+    "save": "Salvar",
+    "cancel": "Cancelar",
+    "delete": "Excluir",
+    "rename": "Renomear",
+    "create": "Criar",
+    "close": "Fechar",
+    "confirm_title": "Confirmar",
+    "yes": "✓ Sim",
+    "no": "✗ Não",
+    "ok": "OK",
+    "error": "Erro",
+    "loading": "Carregando...",
+    "saved": "✓ Salvo",
+    "saving": "Salvando...",
+    "copied": "Copiado!",
+    "copy_to_clipboard": "Copiar para a área de transferência",
+    "failed": "Falha ao {{action}}. Tente novamente."
+  },
+  "toast": {
+    "region_label": "Notificações",
+    "dismiss": "Dispensar"
+  },
+  "sidebar": {
+    "title": "ARQUIVOS",
+    "favorites_title": "Favoritos",
+    "folders_and_notes": "Pastas e Notas",
+    "new_button": "+ Novo",
+    "new_note": "Nova Nota",
+    "new_folder": "Nova Pasta",
+    "new_from_template": "Novo a partir de Modelo",
+    "new_drawing": "Novo Desenho",
+    "rename_folder": "Renomear pasta",
+    "delete_folder": "Excluir pasta",
+    "search_placeholder": "Buscar notas...",
+    "search_hint": "Digite para buscar suas notas",
+    "clear_search": "Limpar busca",
+    "drag_hint": "💡 Arrastar=Mover",
+    "root_folder": "📂 Raiz",
+    "no_notes": "Nenhuma nota ainda. Crie sua primeira nota!",
+    "no_notes_yet": "Nenhuma nota ou pasta ainda.",
+    "create_first": "Crie sua primeira nota ou pasta!",
+    "loading_notes": "Carregando suas notas…",
+    "no_favorites": "Nenhum favorito ainda",
+    "no_results": "Nenhum resultado encontrado",
+    "expand_all": "Expandir todas as pastas",
+    "collapse_all": "Recolher todas as pastas",
+    "sort_a-z": "Ordenar de A a Z",
+    "sort_z-a": "Ordenar de Z a A",
+    "sort_newest": "Ordenar por mais recentes (apenas arquivos)",
+    "sort_oldest": "Ordenar por mais antigos (apenas arquivos)",
+    "sort_largest": "Ordenar por maiores (apenas arquivos)",
+    "sort_smallest": "Ordenar por menores (apenas arquivos)",
+    "toggle_sidebar": "Alternar barra lateral",
+    "go_to_homepage": "Ir para a página inicial",
+    "hide_panel": "Ocultar painel lateral",
+    "show_panel": "Mostrar painel lateral",
+    "files": "Arquivos",
+    "search": "Buscar",
+    "search_title": "BUSCA",
+    "settings": "Configurações",
+    "settings_title": "CONFIGURAÇÕES",
+    "filtered_notes": "Notas Filtradas"
+  },
+  "editor": {
+    "placeholder": "Comece a escrever em markdown...",
+    "drop_hint": "💡 Solte aqui para inserir na posição do cursor...",
+    "mode_edit": "Editar",
+    "mode_split": "Dividido",
+    "mode_preview": "Pré-visualização",
+    "edited": "Editado {{time}}",
+    "just_now": "agora mesmo",
+    "minutes_ago": "há {{count}}min",
+    "hours_ago": "há {{count}}h",
+    "days_ago": "há {{count}}d",
+    "tasks_all_checked": "{{changed}} de {{total}} tarefas concluídas",
+    "tasks_all_unchecked": "{{changed}} de {{total}} tarefas não concluídas"
+  },
+  "notes": {
+    "confirm_delete": "Excluir \"{{name}}\"?",
+    "already_exists": "Já existe uma nota chamada \"{{name}}\" neste local.\nEscolha um nome diferente.",
+    "prompt_name": "Digite o nome da nota:",
+    "input_placeholder": "Nome da nota",
+    "prompt_name_in_folder": "Criar nota em \"{{folder}}\".",
+    "prompt_name_with_path": "Você pode usar pasta/nome para colocar a nota dentro de pastas aninhadas.",
+    "prompt_rename": "Digite o novo nome:",
+    "invalid_name": "Nome de nota inválido.",
+    "empty_name": "O nome da nota não pode ficar vazio.",
+    "not_found": "Nota não encontrada: {{path}}",
+    "create_from_link": "A nota \"{{path}}\" não existe.\n\nDeseja criá-la?",
+    "no_content": "Nenhum conteúdo de nota para exportar",
+    "open_first": "Abra uma nota primeiro antes de enviar imagens.",
+    "save_conflict_title": "Nota alterada em outro lugar",
+    "save_conflict_message": "\"{{name}}\" foi alterada no disco desde que você a abriu: outra aba, uma ferramenta de sincronização ou um agente de IA escreveu nela.\n\nRecarregar mostra a versão no disco; suas alterações não salvas serão descartadas.\nSobrescrever salva a sua versão no lugar da deles.",
+    "save_conflict_overwrite": "Sobrescrever",
+    "save_conflict_reload": "Recarregar",
+    "save_conflict_unsaved": "\"{{name}}\": suas últimas alterações não foram salvas, a nota foi alterada em outro lugar."
+  },
+  "folders": {
+    "confirm_delete": "⚠️ AVISO ⚠️\n\nTem certeza de que deseja excluir a pasta \"{{name}}\"?\n\nIsso excluirá PERMANENTEMENTE:\n• Todas as notas dentro desta pasta\n• Todas as subpastas e seus conteúdos\n\nEsta ação NÃO PODE ser desfeita!",
+    "already_exists": "Já existe uma pasta chamada \"{{name}}\" neste local.\nEscolha um nome diferente.",
+    "prompt_name": "Digite o nome da pasta:",
+    "folder_name": "Nome da Pasta",
+    "input_placeholder": "Nome da pasta",
+    "prompt_name_in_folder": "Criar subpasta em \"{{folder}}\".",
+    "prompt_name_with_path": "Use barras no caminho para aninhar pastas (ex.: \"Projetos\" ou \"Trabalho/2025\").",
+    "prompt_rename": "Renomear a pasta \"{{name}}\" para:",
+    "rename_modal_title": "Renomear pasta",
+    "rename_modal_description": "Digite o novo nome da pasta \"{{name}}\".",
+    "rename_modal_label": "Novo nome",
+    "invalid_name": "Nome de pasta inválido.",
+    "cannot_move_into_self": "Não é possível mover a pasta para dentro dela própria ou de sua subpasta.",
+    "empty": "vazia"
+  },
+  "toolbar": {
+    "undo": "Desfazer (Ctrl+Z)",
+    "redo": "Refazer (Ctrl+Y)",
+    "delete_note": "Excluir nota",
+    "delete_image": "Excluir imagem",
+    "delete_drawing": "Excluir desenho",
+    "export_html": "Exportar como HTML",
+    "print_preview": "Pré-visualizar impressão",
+    "copy_link": "Copiar link para a área de transferência",
+    "add_favorite": "Adicionar aos favoritos",
+    "remove_favorite": "Remover dos favoritos"
+  },
+  "zen_mode": {
+    "title": "Modo Zen",
+    "tooltip": "Modo Zen (Ctrl+Alt+Z)",
+    "exit": "Sair do Modo Zen",
+    "exit_hint": "Sair do Modo Zen (Esc)"
+  },
+  "share": {
+    "button_tooltip": "Compartilhar nota",
+    "modal_title": "Compartilhar Nota",
+    "not_shared_description": "Esta nota não está compartilhada no momento. Crie um link para compartilhá-la com qualquer pessoa.",
+    "shared_description": "Qualquer pessoa com este link pode ver esta nota:",
+    "create_link": "Criar Link de Compartilhamento",
+    "copy": "Copiar",
+    "stop_sharing": "Parar de Compartilhar",
+    "confirm_revoke": "Tem certeza de que deseja parar de compartilhar esta nota? O link de compartilhamento deixará de funcionar.",
+    "error_creating": "Falha ao criar o link de compartilhamento: {{error}}",
+    "error_revoking": "Falha ao revogar o link de compartilhamento: {{error}}",
+    "show_qr": "Mostrar Código QR",
+    "hide_qr": "Ocultar Código QR",
+    "panel_title": "Compartilhadas",
+    "no_shared": "Nenhuma nota compartilhada",
+    "link_name": "Nome do link",
+    "use_random_link": "Usar um link aleatório",
+    "custom_link_warning": "Qualquer pessoa que adivinhar o nome pode abrir a nota. Use um link aleatório para conteúdo sensível.",
+    "slug_available": "O nome está disponível",
+    "slug_taken": "Outro link já usa este nome",
+    "slug_invalid_chars": "Use apenas letras, números, hífens e sublinhados",
+    "slug_too_short": "Use pelo menos {{min}} caracteres",
+    "slug_too_long": "Use no máximo {{max}} caracteres",
+    "update_link": "Atualizar Link",
+    "link_not_saved": "ainda não salvo",
+    "confirm_slug_change": "Alterar o nome do link? O link de compartilhamento atual deixará de funcionar imediatamente.",
+    "error_updating": "Falha ao atualizar o link de compartilhamento: {{error}}"
+  },
+  "quick_switcher": {
+    "placeholder": "Digite para buscar notas...",
+    "no_results": "Nenhuma nota correspondente",
+    "recent_hint": "Mostrando notas recentes. Digite para buscar em todas.",
+    "navigate": "navegar",
+    "open": "abrir",
+    "close": "fechar"
+  },
+  "tags": {
+    "title": "Tags",
+    "no_tags": "Nenhuma tag encontrada",
+    "hint": "Adicione tags usando o frontmatter YAML",
+    "no_matches": "Nenhuma nota corresponde às tags selecionadas",
+    "clear_all": "Limpar filtros de tags",
+    "filter_by": "Filtrar por {{tag}} ({{count}} notas)"
+  },
+  "outline": {
+    "title": "Esboço",
+    "no_headings": "Nenhum título encontrado",
+    "hint": "Adicione títulos usando a sintaxe #"
+  },
+  "backlinks": {
+    "title": "Backlinks",
+    "no_backlinks": "Nenhum backlink encontrado",
+    "hint": "Outras notas aparecerão aqui quando vincularem a esta nota",
+    "select_note": "Selecione uma nota para ver os backlinks",
+    "more_refs": "mais"
+  },
+  "stats": {
+    "words": "palavras",
+    "reading_time": "~{{minutes}}min de leitura",
+    "links": "{{count}} links",
+    "click_details": "▼ Clique para detalhes"
+  },
+  "graph": {
+    "title": "Visualização do Grafo",
+    "empty": "Nenhuma conexão para exibir",
+    "markdown_links": "Links markdown",
+    "click_hint": "Clique: selecionar • Duplo clique: abrir"
+  },
+  "templates": {
+    "title": "Modelos",
+    "select": "Selecione um modelo...",
+    "prompt_name": "Digite o nome da nota:",
+    "no_templates": "Nenhum modelo encontrado. Crie modelos na pasta _templates.",
+    "create_failed": "Falha ao criar nota a partir do modelo",
+    "create_from_template": "Criar a partir de Modelo",
+    "select_template": "Selecionar Modelo",
+    "choose_template": "Escolha um modelo",
+    "note_name": "Nome da Nota",
+    "available_placeholders": "Placeholders disponíveis",
+    "create_note": "Criar Nota"
+  },
+  "export": {
+    "failed": "Falha ao exportar HTML: {{error}}"
+  },
+  "login": {
+    "title": "Login",
+    "tagline": "Sua Base de Conhecimento Auto-Hosteada",
+    "password_placeholder": "Digite sua senha",
+    "unlock_button": "🔓 Desbloquear",
+    "footer": "🔒 Seguro e Auto-Hosteado",
+    "error_incorrect_password": "Senha incorreta. Tente novamente."
+  },
+  "drawing": {
+    "tool_freehand": "Lápis — desenho à mão livre",
+    "tool_line": "Linha reta",
+    "tool_rect": "Retângulo",
+    "tool_ellipse": "Círculo",
+    "color": "Cor",
+    "width": "Espessura do traço",
+    "tool_eraser": "Borracha (pinta com a cor de fundo)",
+    "tool_eyedropper": "Conta-gotas — pegue uma cor do canvas",
+    "tool_fill": "Balde de tinta — preenche a área conectada com cor",
+    "tool_text": "Texto — clique no canvas para digitar",
+    "clear": "Limpar",
+    "clear_hint": "Substituir por uma imagem em branco",
+    "clear_title": "Substituir por um canvas em branco?",
+    "clear_confirm": "O PNG salvo e todos os traços desta sessão serão substituídos por uma imagem branca. Não é possível desfazer."
+  },
+  "media": {
+    "confirm_delete": "Excluir \"{{name}}\"?",
+    "upload_failed": "Falha ao enviar o arquivo",
+    "no_valid_files": "Nenhum arquivo válido encontrado. Suportados: {{formats}}"
+  },
+  "move": {
+    "failed_note": "Falha ao mover a nota.",
+    "failed_folder": "Falha ao mover a pasta.",
+    "failed_media": "Falha ao mover o arquivo de mídia."
+  },
+  "search": {
+    "previous": "Anterior (Shift+F3)",
+    "next": "Próximo (F3)",
+    "matches": "{{current}} de {{total}}",
+    "match_of": "Ocorrência {{current}} de {{total}}",
+    "result_singular": "resultado",
+    "result_plural": "resultados",
+    "no_results": "Nenhuma nota contém \"{{query}}\"",
+    "searching": "Buscando por \"{{query}}\"..."
+  },
+  "theme": {
+    "title": "Tema"
+  },
+  "language": {
+    "title": "Idioma"
+  },
+  "syntax_highlight": {
+    "title": "Destaque de Sintaxe do Editor",
+    "description": "Colorir a sintaxe markdown no editor",
+    "enable": "Ativar destaque de sintaxe",
+    "disable": "Desativar destaque de sintaxe"
+  },
+  "settings": {
+    "account": "Conta",
+    "logout": "Sair",
+    "readable_line_length": "Comprimento de linha legível",
+    "readable_line_length_desc": "Limitar a largura da pré-visualização para facilitar a leitura",
+    "hide_underscore_folders": "Ocultar pastas de sistema",
+    "hide_underscore_folders_desc": "Ocultar _attachments, _templates e outras pastas com sublinhado da barra lateral e do grafo",
+    "tab_inserts_tab": "Tecla Tab insere tabulação",
+    "tab_inserts_tab_desc": "Pressione Tab para inserir um caractere de tabulação em vez de mudar o foco",
+    "new_button_action": "Quando você clica em +",
+    "new_button_action_desc": "Shift+clique sempre mostra o seletor.",
+    "new_button_option_chooser": "Mostrar seletor (padrão)",
+    "new_button_option_note": "Nova nota",
+    "new_button_option_folder": "Nova pasta",
+    "new_button_option_template": "Nova nota a partir de modelo",
+    "new_button_option_drawing": "Novo desenho",
+    "auto_fill_note_title": "Preencher título automaticamente com timestamp",
+    "auto_fill_note_title_desc": "yyyymmddHHMMSS. Enter para aceitar, digite para substituir."
+  },
+  "homepage": {
+    "title": "Início",
+    "welcome": "Bem-vindo ao NoteDiscovery",
+    "get_started": "Crie algo para começar",
+    "no_notes_title": "Nenhuma nota ainda",
+    "no_notes_desc": "Crie sua primeira nota ou pasta",
+    "folder_empty": "Esta pasta está vazia",
+    "note_singular": "nota",
+    "note_plural": "notas",
+    "folder_singular": "pasta",
+    "folder_plural": "pastas",
+    "view_cards": "Visualização em cartões",
+    "view_list": "Visualização em lista"
+  },
+  "format": {
+    "bold": "Negrito",
+    "italic": "Itálico",
+    "strikethrough": "Tachado",
+    "heading": "Título",
+    "link": "Link",
+    "image": "Imagem",
+    "code": "Código inline",
+    "codeblock": "Bloco de código",
+    "quote": "Citação",
+    "bullet_list": "Lista com marcadores",
+    "numbered_list": "Lista numerada",
+    "checkbox": "Caixa de seleção",
+    "table": "Tabela"
+  },
+  "validation": {
+    "forbidden_chars": "O nome contém caracteres proibidos: {{chars}}",
+    "reserved_name": "Este nome é reservado pelo sistema operacional.",
+    "invalid_dot": "O nome não pode ser apenas um ponto.",
+    "trailing_dot_space": "O nome não pode terminar com ponto ou espaço."
+  },
+  "support": {
+    "enjoying_demo": "Apoie este projeto",
+    "deploy_own": "Implante sua própria instância",
+    "thank_you": "Obrigado pelo seu apoio! 💚"
+  },
+  "demo": {
+    "title": "MODO DEMO",
+    "warning": "O conteúdo é reiniciado diariamente. As alterações podem ser sobrescritas por outros usuários."
+  }
+}
