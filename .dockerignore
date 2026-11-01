@@ -1,0 +1,9 @@
+.git
+.github
+notediscovery
+data/
+test_data/
+*.exe
+*.test
+run.sh
+.DS_Store
