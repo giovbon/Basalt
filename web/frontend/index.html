@@ -129,7 +129,6 @@
     
     <!-- Mermaid is not loaded here: renderMermaid() imports it on first diagram -->
     <script src="/static/vendor/vis-network/vis-network.min.js"></script>
-    <script src="/static/vendor/qrcode-generator/qrcode.min.js"></script>
     
     <!-- Theme styles will be loaded dynamically -->
     <link rel="stylesheet" id="theme-stylesheet" href="">
@@ -831,7 +830,6 @@
         /* Z-index hierarchy (for reference):
            - Mobile sidebar: 1000
            - Mobile overlay: 999
-           - Template modal: 1100 (must be above sidebar)
            - Dropdown menu: 50 (below everything)
         */
         @media (max-width: 768px) {
@@ -1229,26 +1227,6 @@
                     ></span>
                 </button>
 
-                <!-- Shared notes (public links) -->
-                <button
-                    class="icon-rail-btn relative"
-                    :class="{'active': activePanel === 'shared'}"
-                    @click="openSidebarPanel('shared')"
-                    :title="t('share.panel_title')"
-                    :aria-label="t('share.panel_title')"
-                >
-                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"></path>
-                    </svg>
-                    <span
-                        x-show="_sharedNotePathsList.length > 0"
-                        x-cloak
-                        class="absolute -top-1 -right-1 w-4 h-4 text-[9px] font-bold rounded-full flex items-center justify-center"
-                        style="background-color: var(--accent-primary); color: white;"
-                        x-text="_sharedNotePathsList.length > 9 ? '9+' : _sharedNotePathsList.length"
-                    ></span>
-                </button>
-                
                 <div class="icon-rail-spacer"></div>
 
                 <!-- Toggle sidebar panel (hides files/search/outline/etc.; icon rail stays).
@@ -1791,49 +1769,6 @@
                 </div>
                 <!-- END BACKLINKS PANEL -->
 
-                <!-- ==================== SHARED NOTES PANEL ==================== -->
-                <div x-show="activePanel === 'shared'" x-transition:enter="transition ease-out duration-150" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100" class="flex flex-col h-full">
-                    <div class="flex-shrink-0 px-3 py-2 border-b flex items-center justify-between" style="border-color: var(--border-primary);">
-                        <span class="text-xs font-semibold uppercase tracking-wide" style="color: var(--text-tertiary);" x-text="t('share.panel_title')"></span>
-                        <span class="text-xs px-1.5 py-0.5 rounded" style="background-color: var(--bg-tertiary); color: var(--text-tertiary);" x-text="_sharedNotePathsList.length"></span>
-                    </div>
-                    <div class="flex-1 overflow-y-auto custom-scrollbar">
-                        <div class="py-2">
-                            <template x-if="_sharedNotePathsList.length > 0">
-                                <div class="px-2">
-                                    <template x-for="item in getSharedPanelItems()" :key="item.path">
-                                        <div
-                                            @click="openItem(item.path, 'note')"
-                                            class="hover-accent px-2 py-1.5 text-sm cursor-pointer mb-1 rounded"
-                                            :style="currentNote === item.path ? 'background-color: var(--accent-light); color: var(--accent-primary);' : 'color: var(--text-primary);'"
-                                            :title="item.path"
-                                        >
-                                            <div class="flex items-start gap-2 mb-0.5">
-                                                <svg class="w-4 h-4 flex-shrink-0 mt-0.5" style="color: var(--accent-primary); opacity: 0.9;" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"></path>
-                                                </svg>
-                                                <div class="min-w-0 flex-1">
-                                                    <div class="font-medium truncate" x-text="item.name"></div>
-                                                    <div class="text-xs truncate" style="color: var(--text-tertiary);" x-text="item.folder"></div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </template>
-                                </div>
-                            </template>
-                            <template x-if="_sharedNotePathsList.length === 0">
-                                <div class="text-center py-6 px-3">
-                                    <svg class="w-12 h-12 mx-auto mb-3 opacity-40" style="color: var(--text-tertiary);" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"></path>
-                                    </svg>
-                                    <p class="text-sm" style="color: var(--text-tertiary);" x-text="t('share.no_shared')"></p>
-                                </div>
-                            </template>
-                        </div>
-                    </div>
-                </div>
-                <!-- END SHARED NOTES PANEL -->
-
                 <!-- ==================== SETTINGS PANEL ==================== -->
                 <template x-if="activePanel === 'settings'">
                     <div class="flex flex-col h-full">
@@ -1958,7 +1893,6 @@
                                         <option value="chooser"  x-text="t('settings.new_button_option_chooser')"></option>
                                         <option value="note"     x-text="t('settings.new_button_option_note')"></option>
                                         <option value="folder"   x-text="t('settings.new_button_option_folder')"></option>
-                                        <option value="template" x-text="t('settings.new_button_option_template')"></option>
                                         <option value="drawing"  x-text="t('settings.new_button_option_drawing')"></option>
                                     </select>
                                     <p class="text-xs mt-1" style="color: var(--text-tertiary);" x-text="t('settings.new_button_action_desc')"></p>
@@ -2618,21 +2552,6 @@
                                     </svg>
                                 </button>
                                 <div style="width: 1px; height: 20px; background-color: var(--border-primary);"></div>
-                                <!-- Share button -->
-                                <button 
-                                    @click="openShareModal()"
-                                    class="p-2 transition hover:bg-opacity-80"
-                                    :title="t('share.button_tooltip')"
-                                    style="color: var(--text-secondary);"
-                                    @mouseenter="$el.style.backgroundColor = 'var(--bg-secondary)'"
-                                    @mouseleave="$el.style.backgroundColor = 'transparent'"
-                                >
-                                    <!-- Share/Globe icon -->
-                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"></path>
-                                    </svg>
-                                </button>
-                                <div style="width: 1px; height: 20px; background-color: var(--border-primary);"></div>
                                 <button 
                                     @click="toggleZenMode()"
                                     class="p-2 transition"
@@ -3144,145 +3063,6 @@
                         </template>
                     </div>
                     
-                    <!-- Stats Status Bar (only shows if plugin enabled) -->
-                    <div x-show="statsPluginEnabled && currentNote && noteStats" 
-                         class="border-t zen-hide"
-                         style="background-color: var(--bg-secondary); border-color: var(--border-primary);">
-                        
-                        <!-- Collapsed State (default) -->
-                        <div x-show="!statsExpanded" 
-                             @click="statsExpanded = true"
-                             class="px-4 py-2 flex items-center justify-between cursor-pointer hover:bg-opacity-80 transition-colors"
-                             onmouseover="this.style.backgroundColor='var(--bg-hover)'"
-                             onmouseout="this.style.backgroundColor='transparent'">
-                            <div class="flex items-center space-x-4 text-sm" style="color: var(--text-secondary);">
-                                <span class="font-medium">📊</span>
-                                <span x-text="noteStats ? noteStats.words.toLocaleString() + ' words' : ''"></span>
-                                <span>·</span>
-                                <span x-text="noteStats ? '~' + noteStats.reading_time_minutes + 'm read' : ''"></span>
-                                <template x-if="noteStats && noteStats.links > 0">
-                                    <span>
-                                        · <span x-text="noteStats.links + ' links'"></span>
-                                    </span>
-                                </template>
-                                <template x-if="noteStats && noteStats.tasks.total > 0">
-                                    <span>
-                                        · <span x-text="noteStats.tasks.completed + '/' + noteStats.tasks.total + ' tasks'"></span>
-                                    </span>
-                                </template>
-                            </div>
-                            <span class="text-xs" style="color: var(--text-tertiary);">▼ Click for details</span>
-                        </div>
-                        
-                        <!-- Expanded State -->
-                        <div x-show="statsExpanded" 
-                             class="px-4 py-3"
-                             style="background-color: var(--bg-tertiary);">
-                            <div class="flex items-center justify-between mb-3">
-                                <h3 class="font-semibold text-sm" style="color: var(--text-primary);">📊 Note Statistics</h3>
-                                <button 
-                                    @click="statsExpanded = false"
-                                    class="text-xs px-2 py-1 rounded hover:bg-opacity-80"
-                                    style="color: var(--text-secondary); background-color: var(--bg-hover);">
-                                    ▲ Collapse
-                                </button>
-                            </div>
-                            
-                            <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-                                <!-- Basic Stats -->
-                                <div>
-                                    <div class="text-xs" style="color: var(--text-tertiary);">Words</div>
-                                    <div class="font-semibold" style="color: var(--text-primary);" x-text="noteStats ? noteStats.words.toLocaleString() : '0'"></div>
-                                </div>
-                                <div>
-                                    <div class="text-xs" style="color: var(--text-tertiary);">Characters</div>
-                                    <div class="font-semibold" style="color: var(--text-primary);" x-text="noteStats ? noteStats.characters.toLocaleString() : '0'"></div>
-                                </div>
-                                <div>
-                                    <div class="text-xs" style="color: var(--text-tertiary);">Reading Time</div>
-                                    <div class="font-semibold" style="color: var(--text-primary);" x-text="noteStats ? '~' + noteStats.reading_time_minutes + ' min' : '0 min'"></div>
-                                </div>
-                                <div>
-                                    <div class="text-xs" style="color: var(--text-tertiary);">Lines</div>
-                                    <div class="font-semibold" style="color: var(--text-primary);" x-text="noteStats ? noteStats.lines.toLocaleString() : '0'"></div>
-                                </div>
-                                
-                                <!-- Sentences -->
-                                <div>
-                                    <div class="text-xs" style="color: var(--text-tertiary);">Sentences</div>
-                                    <div class="font-semibold" style="color: var(--text-primary);" x-text="noteStats ? noteStats.sentences.toLocaleString() : '0'"></div>
-                                </div>
-
-                                <!-- Lists -->
-                                <div>
-                                    <div class="text-xs" style="color: var(--text-tertiary);">Lists</div>
-                                    <div class="font-semibold" style="color: var(--text-primary);" x-text="noteStats ? noteStats.list_items.toLocaleString() : '0'"></div>
-                                </div>
-
-                                <!-- Tables -->
-                                <div>
-                                    <div class="text-xs" style="color: var(--text-tertiary);">Tables</div>
-                                    <div class="font-semibold" style="color: var(--text-primary);" x-text="noteStats ? noteStats.tables.toLocaleString() : '0'"></div>
-                                </div>
-                                
-                                <!-- Links -->
-                                <template x-if="noteStats && noteStats.links > 0">
-                                    <div>
-                                        <div class="text-xs" style="color: var(--text-tertiary);">Links</div>
-                                        <div class="font-semibold" style="color: var(--text-primary);">
-                                            <span x-text="noteStats.links"></span>
-                                            <span class="text-xs font-normal" style="color: var(--text-tertiary);">
-                                                (<span x-text="noteStats.internal_links"></span> internal)
-                                            </span>
-                                        </div>
-                                    </div>
-                                </template>
-                                
-                                <!-- Headings -->
-                                <template x-if="noteStats && noteStats.headings.total > 0">
-                                    <div>
-                                        <div class="text-xs" style="color: var(--text-tertiary);">Headings</div>
-                                        <div class="font-semibold" style="color: var(--text-primary);">
-                                            <span x-text="noteStats.headings.total"></span>
-                                            <span class="text-xs font-normal" style="color: var(--text-tertiary);">
-                                                (H1: <span x-text="noteStats.headings.h1"></span>, H2: <span x-text="noteStats.headings.h2"></span>)
-                                            </span>
-                                        </div>
-                                    </div>
-                                </template>
-                                
-                                <!-- Code Blocks -->
-                                <template x-if="noteStats && noteStats.code_blocks > 0">
-                                    <div>
-                                        <div class="text-xs" style="color: var(--text-tertiary);">Code Blocks</div>
-                                        <div class="font-semibold" style="color: var(--text-primary);" x-text="noteStats.code_blocks"></div>
-                                    </div>
-                                </template>
-                                
-                                <!-- Tasks -->
-                                <template x-if="noteStats && noteStats.tasks.total > 0">
-                                    <div>
-                                        <div class="text-xs" style="color: var(--text-tertiary);">Tasks</div>
-                                        <div class="font-semibold" style="color: var(--text-primary);">
-                                            <span x-text="noteStats.tasks.completed + '/' + noteStats.tasks.total"></span>
-                                            <span class="text-xs font-normal" style="color: var(--text-tertiary);">
-                                                (<span x-text="noteStats.tasks.completion_rate"></span>%)
-                                            </span>
-                                        </div>
-                                    </div>
-                                </template>
-                                
-                                <!-- Images -->
-                                <template x-if="noteStats && noteStats.images > 0">
-                                    <div>
-                                        <div class="text-xs" style="color: var(--text-tertiary);">Images</div>
-                                        <div class="font-semibold" style="color: var(--text-primary);" x-text="noteStats.images"></div>
-                                    </div>
-                                </template>
-                            </div>
-                        </div>
-                    </div>
-                    
                 </div>
             </template>
             
@@ -3325,16 +3105,6 @@
                 <span x-text="t('sidebar.new_folder')"></span>
             </button>
             <button 
-                @click.stop="openTemplateModal()"
-                class="w-full px-4 py-2.5 text-sm text-left flex items-center gap-3 transition-colors"
-                style="color: var(--text-primary);"
-                onmouseover="this.style.backgroundColor='var(--bg-hover)'"
-                onmouseout="this.style.backgroundColor='transparent'"
-            >
-                <span class="text-lg">📄</span>
-                <span x-text="t('sidebar.new_from_template')"></span>
-            </button>
-            <button 
                 @click="createNewDrawing()"
                 class="w-full px-4 py-2.5 text-sm text-left flex items-center gap-3 transition-colors"
                 style="color: var(--text-primary);"
@@ -3364,93 +3134,6 @@
         </template>
     </div>
 
-    <!-- Template Selection Modal -->
-    <div x-show="showTemplateModal" 
-         @click.self="showTemplateModal = false; selectedTemplate = ''; newTemplateNoteName = ''"
-         @keydown.escape.window="showTemplateModal && (showTemplateModal = false, selectedTemplate = '', newTemplateNoteName = '')"
-         class="fixed inset-0 flex items-center justify-center"
-         style="background-color: rgba(0, 0, 0, 0.5); z-index: 1100;"
-         x-cloak>
-        <div class="rounded-lg shadow-xl p-6 max-w-md w-full mx-4"
-             style="background-color: var(--bg-secondary); color: var(--text-primary);"
-             @click.stop>
-            
-            <h2 class="text-xl font-bold mb-4" style="color: var(--text-primary);" x-text="t('templates.create_from_template')"></h2>
-            
-            <!-- Template Selection -->
-            <div class="mb-4">
-                <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);" x-text="t('templates.select_template')">
-                </label>
-                <select 
-                    x-model="selectedTemplate"
-                    class="w-full px-3 py-2 rounded border"
-                    style="background-color: var(--bg-tertiary); color: var(--text-primary); border-color: var(--border-primary);"
-                >
-                    <option value="" x-text="'-- ' + t('templates.choose_template') + ' --'"></option>
-                    <template x-for="template in availableTemplates" :key="template.name">
-                        <option :value="template.name" x-text="template.name"></option>
-                    </template>
-                </select>
-            </div>
-            
-            <!-- Note Name Input -->
-            <div class="mb-4">
-                <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);" x-text="t('notes.prompt_name')">
-                </label>
-                <input 
-                    id="template-note-name-input"
-                    x-model="newTemplateNoteName"
-                    type="text"
-                    :placeholder="t('notes.input_placeholder')"
-                    class="w-full px-3 py-2 rounded border"
-                    style="background-color: var(--bg-tertiary); color: var(--text-primary); border-color: var(--border-primary);"
-                    @keydown.enter="createNoteFromTemplate()"
-                />
-            </div>
-            
-            <!-- Info about placeholders -->
-            <div class="mb-4 text-xs p-3 rounded" style="background-color: var(--bg-tertiary); color: var(--text-secondary);">
-                <strong x-text="t('templates.available_placeholders') + ':'"></strong><br>
-                <code style="font-family: monospace;">{{date}}</code>, 
-                <code style="font-family: monospace;">{{time}}</code>, 
-                <code style="font-family: monospace;">{{datetime}}</code>, 
-                <code style="font-family: monospace;">{{year}}</code>, 
-                <code style="font-family: monospace;">{{month}}</code>, 
-                <code style="font-family: monospace;">{{day}}</code>, 
-                <code style="font-family: monospace;">{{title}}</code>, 
-                <code style="font-family: monospace;">{{folder}}</code>
-            </div>
-            
-            <!-- Empty state when no templates available -->
-            <div x-show="availableTemplates.length === 0" class="mb-4 text-sm p-3 rounded" style="background-color: var(--bg-tertiary); color: var(--text-secondary);" x-text="t('templates.no_templates')">
-            </div>
-            
-            <!-- Actions -->
-            <div class="flex gap-2">
-                <button 
-                    @click="createNoteFromTemplate()"
-                    :disabled="!selectedTemplate || !newTemplateNoteName.trim() || availableTemplates.length === 0"
-                    class="flex-1 px-4 py-2 rounded font-medium text-white transition-colors"
-                    style="background-color: var(--accent-primary);"
-                    :style="(!selectedTemplate || !newTemplateNoteName.trim() || availableTemplates.length === 0) ? { opacity: '0.5', cursor: 'not-allowed' } : {}"
-                    onmouseover="if(!this.disabled) this.style.backgroundColor='var(--accent-hover)'"
-                    onmouseout="if(!this.disabled) this.style.backgroundColor='var(--accent-primary)'"
-                    x-text="t('templates.create_note')"
-                >
-                </button>
-                <button 
-                    @click="showTemplateModal = false; selectedTemplate = ''; newTemplateNoteName = ''"
-                    class="flex-1 px-4 py-2 rounded font-medium transition-colors"
-                    style="background-color: var(--bg-tertiary); color: var(--text-primary);"
-                    onmouseover="this.style.backgroundColor='var(--bg-hover)'"
-                    onmouseout="this.style.backgroundColor='var(--bg-tertiary)'"
-                    x-text="t('common.cancel')"
-                >
-                </button>
-            </div>
-        </div>
-    </div>
-    
     <!-- New note / folder name (replaces window.prompt) -->
     <div x-show="showCreateNameModal"
          @click.self="cancelCreateNameModal()"
@@ -3654,189 +3337,6 @@
         </div>
     </div>
 
-    <!-- Share Modal -->
-    <div x-show="showShareModal" 
-         @click.self="closeShareModal()"
-         @keydown.escape.window="showShareModal && closeShareModal()"
-         class="fixed inset-0 flex items-center justify-center"
-         style="background-color: rgba(0, 0, 0, 0.5); z-index: 1100;"
-         x-cloak>
-        <div class="rounded-lg shadow-xl p-6 max-w-md w-full mx-4"
-             style="background-color: var(--bg-secondary); color: var(--text-primary);"
-             @click.stop>
-            
-            <h2 class="text-xl font-bold mb-4 flex items-center gap-2" style="color: var(--text-primary);">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"></path>
-                </svg>
-                <span x-text="t('share.modal_title')"></span>
-            </h2>
-            
-            <!-- Loading state -->
-            <div x-show="shareLoading" class="text-center py-4">
-                <span x-text="t('common.loading')"></span>
-            </div>
-            
-            <!-- Not shared state -->
-            <div x-show="!shareLoading && !shareInfo?.shared">
-                <p class="mb-3 text-sm" style="color: var(--text-secondary);" x-text="t('share.not_shared_description')"></p>
-                
-                <!-- Link name: generated unless the user wants to choose it -->
-                <label class="flex items-center gap-2 mb-3 text-sm cursor-pointer" style="color: var(--text-secondary);">
-                    <input type="checkbox" x-model="shareUseRandomLink" @change="onShareRandomLinkToggle()" />
-                    <span x-text="t('share.use_random_link')"></span>
-                </label>
-                
-                <div x-show="!shareUseRandomLink" class="mb-3">
-                    <input 
-                        type="text"
-                        x-model="shareSlug"
-                        @input="onShareSlugInput($event)"
-                        @keydown.enter.prevent="canSubmitShareLink() && createShareLink()"
-                        :placeholder="t('share.link_name')"
-                        :aria-label="t('share.link_name')"
-                        spellcheck="false"
-                        autocapitalize="off"
-                        class="w-full px-3 py-2 rounded border text-sm"
-                        style="background-color: var(--bg-tertiary); color: var(--text-primary); border-color: var(--border-primary);"
-                    />
-                    <!-- Both lines render even when empty: they change on every
-                         keystroke, and hiding them resizes the dialog as you type -->
-                    <p class="mt-1 text-xs break-all" style="color: var(--text-tertiary);" x-text="shareSlugPreviewUrl() || '\u00A0'"></p>
-                    <p class="mt-1 text-xs" 
-                       :style="shareSlugOk() ? 'color: var(--success, #22c55e);' : 'color: var(--error);'" 
-                       x-text="shareSlugMessage() || '\u00A0'"></p>
-                    <p class="mt-2 text-xs" style="color: var(--text-tertiary);" x-text="t('share.custom_link_warning')"></p>
-                </div>
-                
-                <button 
-                    @click="createShareLink()"
-                    :disabled="!canSubmitShareLink()"
-                    :class="canSubmitShareLink() ? '' : 'opacity-50 cursor-not-allowed'"
-                    class="w-full px-4 py-2 rounded font-medium text-white transition-colors"
-                    style="background-color: var(--accent-primary);"
-                    onmouseover="if(!this.disabled) this.style.backgroundColor='var(--accent-hover)'"
-                    onmouseout="if(!this.disabled) this.style.backgroundColor='var(--accent-primary)'"
-                    x-text="t('share.create_link')"
-                >
-                </button>
-            </div>
-            
-            <!-- Shared state -->
-            <div x-show="!shareLoading && shareInfo?.shared">
-                <p class="mb-2 text-sm" style="color: var(--text-secondary);" x-text="t('share.shared_description')"></p>
-                
-                <!-- Link name, editable: the full URL follows on the line below -->
-                <div class="flex gap-2 mb-1">
-                    <input 
-                        type="text"
-                        x-model="shareSlug"
-                        @input="onShareSlugInput($event)"
-                        @keydown.enter.prevent="updateShareLinkSlug()"
-                        :aria-label="t('share.link_name')"
-                        spellcheck="false"
-                        autocapitalize="off"
-                        class="flex-1 px-3 py-2 rounded border text-sm"
-                        style="background-color: var(--bg-tertiary); color: var(--text-primary); border-color: var(--border-primary);"
-                    />
-                    <button 
-                        @click="copyShareLink()"
-                        class="px-3 py-2 rounded font-medium text-white transition-colors flex items-center gap-1"
-                        :style="shareLinkCopied ? 'background-color: var(--success, #22c55e);' : 'background-color: var(--accent-primary);'"
-                        onmouseover="if(!this.classList.contains('copied')) this.style.backgroundColor='var(--accent-hover)'"
-                        onmouseout="if(!this.classList.contains('copied')) this.style.backgroundColor='var(--accent-primary)'"
-                    >
-                        <svg x-show="!shareLinkCopied" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"></path>
-                        </svg>
-                        <svg x-show="shareLinkCopied" x-cloak class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-                        </svg>
-                        <span x-text="shareLinkCopied ? t('common.copied') : t('share.copy')"></span>
-                    </button>
-                </div>
-                
-                <!-- Full URL for whatever the field currently holds. Kept in the layout
-                     even when empty so editing the name does not resize the dialog -->
-                <p class="mb-1 text-xs break-all" style="color: var(--text-tertiary);">
-                    <span x-text="shareSlugPreviewUrl() || '\u00A0'"></span>
-                    <span x-show="shareSlugChanged()" x-text="' - ' + t('share.link_not_saved')"></span>
-                </p>
-                <p class="mb-3 text-xs" 
-                   :style="shareSlugOk() ? 'color: var(--success, #22c55e);' : 'color: var(--error);'" 
-                   x-text="shareSlugMessage() || '\u00A0'"></p>
-                
-                <!-- Renaming retires the current URL, so it is an explicit step -->
-                <button 
-                    x-show="shareSlugChanged()"
-                    @click="updateShareLinkSlug()"
-                    :disabled="!canSubmitShareLink()"
-                    :class="canSubmitShareLink() ? '' : 'opacity-50 cursor-not-allowed'"
-                    class="w-full px-4 py-2 mb-4 rounded font-medium text-white transition-colors"
-                    style="background-color: var(--accent-primary);"
-                    onmouseover="if(!this.disabled) this.style.backgroundColor='var(--accent-hover)'"
-                    onmouseout="if(!this.disabled) this.style.backgroundColor='var(--accent-primary)'"
-                    x-text="t('share.update_link')"
-                >
-                </button>
-                
-                <!-- QR Code -->
-                <div class="mb-4 flex flex-col items-center">
-                    <button 
-                        @click="showShareQR = !showShareQR"
-                        class="text-sm flex items-center gap-1 mb-2 transition-colors"
-                        style="color: var(--text-secondary);"
-                        onmouseover="this.style.color='var(--text-primary)'"
-                        onmouseout="this.style.color='var(--text-secondary)'"
-                    >
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z"></path>
-                        </svg>
-                        <span x-text="showShareQR ? t('share.hide_qr') : t('share.show_qr')"></span>
-                        <svg class="w-3 h-3 transition-transform" :class="showShareQR ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
-                        </svg>
-                    </button>
-                    <div x-show="showShareQR" 
-                         x-transition:enter="transition ease-out duration-200"
-                         x-transition:enter-start="opacity-0 transform scale-95"
-                         x-transition:enter-end="opacity-100 transform scale-100"
-                         x-transition:leave="transition ease-in duration-150"
-                         x-transition:leave-start="opacity-100 transform scale-100"
-                         x-transition:leave-end="opacity-0 transform scale-95"
-                         class="p-3 rounded-lg" 
-                         style="background-color: white;">
-                        <img :src="generateQRCode(shareInfo?.url)" alt="QR Code" class="w-32 h-32" />
-                    </div>
-                </div>
-                
-                <!-- Revoke sharing -->
-                <button 
-                    @click="revokeShareLink()"
-                    class="w-full px-4 py-2 rounded font-medium transition-colors"
-                    style="background-color: transparent; color: var(--error); border: 1px solid var(--error);"
-                    onmouseover="this.style.backgroundColor='rgba(239, 68, 68, 0.1)'"
-                    onmouseout="this.style.backgroundColor='transparent'"
-                    x-text="t('share.stop_sharing')"
-                >
-                </button>
-            </div>
-            
-            <!-- Close button -->
-            <div class="mt-4 pt-4 border-t" style="border-color: var(--border-primary);">
-                <button 
-                    @click="closeShareModal()"
-                    class="w-full px-4 py-2 rounded font-medium transition-colors"
-                    style="background-color: var(--bg-tertiary); color: var(--text-primary);"
-                    onmouseover="this.style.backgroundColor='var(--bg-hover)'"
-                    onmouseout="this.style.backgroundColor='var(--bg-tertiary)'"
-                    x-text="t('common.close')"
-                >
-                </button>
-            </div>
-        </div>
-    </div>
-    
     <!-- Mobile Bottom Tabs -->
     <nav class="mobile-bottom-tabs zen-hide" style="display: none;" role="navigation" aria-label="Main navigation">
         <button 

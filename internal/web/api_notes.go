@@ -61,11 +61,14 @@ func (h *NotesHandler) ListNotes(w http.ResponseWriter, r *http.Request) {
 }
 
 type GetNoteResponse struct {
-	Path      string               `json:"path"`
-	Content   string               `json:"content"`
-	Hash      string               `json:"hash"`
-	Metadata  vault.NoteMetadata   `json:"metadata"`
-	Backlinks []vault.BacklinkItem `json:"backlinks,omitempty"`
+	Path        string               `json:"path"`
+	Content     string               `json:"content"`
+	Hash        string               `json:"hash"`
+	Metadata    vault.NoteMetadata   `json:"metadata"`
+	Frontmatter vault.Frontmatter    `json:"frontmatter"`
+	Outline     []vault.OutlineItem  `json:"outline"`
+	Tags        []string             `json:"tags"`
+	Backlinks   []vault.BacklinkItem `json:"backlinks,omitempty"`
 }
 
 func (h *NotesHandler) GetNote(w http.ResponseWriter, r *http.Request) {
@@ -87,12 +90,16 @@ func (h *NotesHandler) GetNote(w http.ResponseWriter, r *http.Request) {
 
 	storedHash := vault.ContentHash(content)
 	meta := h.vault.CreateNoteMetadata(notePath)
+	parsed := vault.ParseNote(content)
 
 	resp := GetNoteResponse{
-		Path:     notePath,
-		Content:  content,
-		Hash:     storedHash,
-		Metadata: meta,
+		Path:        notePath,
+		Content:     content,
+		Hash:        storedHash,
+		Metadata:    meta,
+		Frontmatter: parsed.Frontmatter,
+		Outline:     parsed.Outline,
+		Tags:        parsed.Tags,
 	}
 
 	if r.URL.Query().Get("include_backlinks") == "true" {
@@ -108,11 +115,14 @@ type SaveNotePayload struct {
 }
 
 type SaveNoteResponse struct {
-	Success bool   `json:"success"`
-	Path    string `json:"path"`
-	Message string `json:"message"`
-	Content string `json:"content"`
-	Hash    string `json:"hash"`
+	Success     bool                `json:"success"`
+	Path        string              `json:"path"`
+	Message     string              `json:"message"`
+	Content     string              `json:"content"`
+	Hash        string              `json:"hash"`
+	Frontmatter vault.Frontmatter   `json:"frontmatter"`
+	Outline     []vault.OutlineItem `json:"outline"`
+	Tags        []string            `json:"tags"`
 }
 
 type ConflictHashResponse struct {
@@ -174,12 +184,16 @@ func (h *NotesHandler) SaveNote(w http.ResponseWriter, r *http.Request) {
 		msg = "Note created successfully"
 	}
 
+	parsed := vault.ParseNote(payload.Content)
 	RespondJSON(w, http.StatusOK, SaveNoteResponse{
-		Success: true,
-		Path:    notePath,
-		Message: msg,
-		Content: payload.Content,
-		Hash:    vault.ContentHash(payload.Content),
+		Success:     true,
+		Path:        notePath,
+		Message:     msg,
+		Content:     payload.Content,
+		Hash:        vault.ContentHash(payload.Content),
+		Frontmatter: parsed.Frontmatter,
+		Outline:     parsed.Outline,
+		Tags:        parsed.Tags,
 	})
 }
 
@@ -253,11 +267,15 @@ func (h *NotesHandler) ReplaceInNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	parsed := vault.ParseNote(newContent)
 	RespondJSON(w, http.StatusOK, map[string]any{
-		"success": true,
-		"path":    payload.Path,
-		"message": "Note updated successfully",
-		"hash":    vault.ContentHash(newContent),
+		"success":     true,
+		"path":        payload.Path,
+		"message":     "Note updated successfully",
+		"hash":        vault.ContentHash(newContent),
+		"frontmatter": parsed.Frontmatter,
+		"outline":     parsed.Outline,
+		"tags":        parsed.Tags,
 	})
 }
 

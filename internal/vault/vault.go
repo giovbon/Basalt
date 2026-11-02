@@ -80,11 +80,13 @@ type GraphData struct {
 type Vault struct {
 	notesDir string
 	mu       sync.RWMutex
+	idx      *Index
 }
 
 func New(notesDir string) *Vault {
 	return &Vault{
 		notesDir: filepath.Clean(notesDir),
+		idx:      newIndex(),
 	}
 }
 
@@ -365,12 +367,22 @@ func (v *Vault) GetNoteContent(notePath string) (string, error) {
 		return "", os.ErrNotExist
 	}
 
+	// Serve from the index when the file has not changed since it was last
+	// read; otherwise read once and warm the cache for the next caller
+	// (search, graph and backlinks all re-read every note per request).
+	rel := NormalizedRelPath(notePath)
+	if content, ok := v.idx.cachedContent(rel, info.ModTime(), info.Size()); ok {
+		return content, nil
+	}
+
 	data, err := os.ReadFile(fullPath)
 	if err != nil {
 		return "", err
 	}
 	// Normalize CRLF to LF
-	return strings.ReplaceAll(string(data), "\r\n", "\n"), nil
+	content := strings.ReplaceAll(string(data), "\r\n", "\n")
+	v.idx.cacheContent(rel, info.ModTime(), info.Size(), content)
+	return content, nil
 }
 
 func (v *Vault) SaveNote(notePath string, content string) error {
@@ -388,7 +400,15 @@ func (v *Vault) SaveNote(notePath string, content string) error {
 	}
 
 	// Python writes UTF-8 string directly
-	return os.WriteFile(fullPath, []byte(content), 0644)
+	if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
+		return err
+	}
+	// Refresh the index with what we just wrote so the next scan/search does
+	// not re-read the file.
+	if info, err := os.Stat(fullPath); err == nil {
+		v.idx.putNote(NormalizedRelPath(notePath), info.ModTime(), info.Size(), content)
+	}
+	return nil
 }
 
 func (v *Vault) DeleteNote(notePath string) bool {
@@ -402,6 +422,7 @@ func (v *Vault) DeleteNote(notePath string) bool {
 	if err := os.Remove(fullPath); err != nil {
 		return false
 	}
+	v.idx.drop(NormalizedRelPath(notePath))
 	return true
 }
 
@@ -437,6 +458,8 @@ func (v *Vault) MoveNote(oldPath, newPath string) (bool, string) {
 	if err := os.Rename(oldFull, newFull); err != nil {
 		return false, fmt.Sprintf("Failed to move file: %s", err.Error())
 	}
+	v.idx.drop(NormalizedRelPath(oldPath))
+	v.idx.drop(NormalizedRelPath(newPath))
 	return true, ""
 }
 
@@ -485,6 +508,7 @@ func (v *Vault) MoveFolder(oldPath, newPath string) (bool, string) {
 	if err := os.Rename(oldFull, newFull); err != nil {
 		return false, fmt.Sprintf("Failed to move folder: %s", err.Error())
 	}
+	v.idx.dropPrefix(NormalizedRelPath(oldPath))
 	return true, ""
 }
 
@@ -500,7 +524,11 @@ func (v *Vault) DeleteFolder(folderPath string) bool {
 	if err != nil || !info.IsDir() {
 		return false
 	}
-	return os.RemoveAll(fullPath) == nil
+	if err := os.RemoveAll(fullPath); err != nil {
+		return false
+	}
+	v.idx.dropPrefix(NormalizedRelPath(folderPath))
+	return true
 }
 
 func (v *Vault) ResolveVaultFolder(folderPath string) (string, error) {
@@ -715,12 +743,20 @@ func (v *Vault) SaveUploadedImage(notePath string, filename string, data []byte,
 }
 
 // ScanNotes traverses the vault skipping dot directories/files and symlinks.
+//
+// The walk always runs (new and deleted files must be noticed), but note
+// contents are only re-read for files whose (mtime, size) changed since the
+// last scan — see Index. Edits made outside the app are picked up by the next
+// scan; the only stale window is an external rewrite that preserves both mtime
+// and size (same-second, same-length edit), which the app's own writes never
+// produce because SaveNote refreshes the entry with the content it wrote.
 func (v *Vault) ScanNotes(includeMedia bool) ([]NoteRecord, []string, error) {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 
 	var notes []NoteRecord = []NoteRecord{}
 	folderSet := make(map[string]struct{})
+	seen := make(map[string]struct{})
 
 	err := filepath.WalkDir(v.notesDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -754,49 +790,71 @@ func (v *Vault) ScanNotes(includeMedia bool) ([]NoteRecord, []string, error) {
 			return nil
 		}
 
-		mediaType := ""
-		if includeMedia {
-			mediaType = GetMediaType(name)
-		}
+		mediaType := GetMediaType(name)
 		isMarkdown := strings.ToLower(filepath.Ext(name)) == ".md"
 		shouldInclude := isMarkdown || (includeMedia && mediaType != "")
 		if !shouldInclude {
 			return nil
 		}
 
+		// Track every eligible file (media included even when this call asked
+		// for notes only) so prune() does not thrash media entries between
+		// calls with different includeMedia.
+		seen[relStr] = struct{}{}
+
 		parentFolder := filepath.Dir(relStr)
 		if parentFolder == "." {
 			parentFolder = ""
 		}
+		stem := strings.TrimSuffix(name, filepath.Ext(name))
 
-		itemType := "note"
-		if mediaType != "" {
-			itemType = mediaType
-		}
-
-		var tags []string
 		if isMarkdown {
-			if data, err := os.ReadFile(path); err == nil {
-				tags = ParseTags(string(data))
+			var tags []string
+			if e, ok := v.idx.get(relStr, info.ModTime(), info.Size()); ok {
+				tags = e.tags
+			} else if data, err := os.ReadFile(path); err == nil {
+				// CRLF-normalized once here; cached content and ParseTags see
+				// the same bytes the rest of the app does.
+				content := strings.ReplaceAll(string(data), "\r\n", "\n")
+				tags = v.idx.putNote(relStr, info.ModTime(), info.Size(), content)
 			}
+
+			notes = append(notes, NoteRecord{
+				Name:     stem,
+				Path:     relStr,
+				Folder:   parentFolder,
+				Modified: FormatTime(info.ModTime()),
+				Size:     info.Size(),
+				Type:     "note",
+				Tags:     tags,
+				MTime:    float64(info.ModTime().UnixNano()) / 1e9,
+			})
+			return nil
 		}
 
-		notes = append(notes, NoteRecord{
-			Name:     strings.TrimSuffix(name, filepath.Ext(name)),
-			Path:     relStr,
-			Folder:   parentFolder,
-			Modified: FormatTime(info.ModTime()),
-			Size:     info.Size(),
-			Type:     itemType,
-			Tags:     tags,
-			MTime:    float64(info.ModTime().UnixNano()) / 1e9,
-		})
+		if _, ok := v.idx.get(relStr, info.ModTime(), info.Size()); !ok {
+			v.idx.putMedia(relStr, stem, parentFolder, mediaType, info.ModTime(), info.Size())
+		}
+		if includeMedia {
+			notes = append(notes, NoteRecord{
+				Name:     stem,
+				Path:     relStr,
+				Folder:   parentFolder,
+				Modified: FormatTime(info.ModTime()),
+				Size:     info.Size(),
+				Type:     mediaType,
+				Tags:     nil,
+				MTime:    float64(info.ModTime().UnixNano()) / 1e9,
+			})
+		}
 		return nil
 	})
 
 	if err != nil {
 		return nil, nil, err
 	}
+
+	v.idx.prune(seen)
 
 	folders := make([]string, 0, len(folderSet))
 	for f := range folderSet {

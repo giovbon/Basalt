@@ -18,10 +18,6 @@ const CONFIG = {
     DRAWING_MAX_DOC_DIM: 4096,
     SEARCH_DEBOUNCE_DELAY: 500,        // ms - Delay before running note search while typing
     SEARCH_MIN_QUERY_LENGTH: 2,        // Shorter queries show the folder tree instead of searching
-    SHARE_SLUG_MIN_LENGTH: 3,          // Mirrors SLUG_MIN_LENGTH in backend/share.py
-    SHARE_SLUG_MAX_LENGTH: 64,         // Mirrors SLUG_MAX_LENGTH in backend/share.py
-    SHARE_SLUG_WORDS: 4,               // Words pulled from a note when suggesting a link name
-    SHARE_SLUG_CHECK_DEBOUNCE: 300,    // ms - Delay before asking the server whether a name is free
     SAVE_INDICATOR_DURATION: 2000,     // ms - How long to show "saved" indicator
     SCROLL_SYNC_DELAY: 50,             // ms - Delay to prevent scroll sync interference
     SCROLL_SYNC_MAX_RETRIES: 10,       // Maximum attempts to find editor/preview elements
@@ -34,20 +30,6 @@ const CONFIG = {
     TOAST_DURATION_INFO_MS: 4500,
     TOAST_DURATION_SUCCESS_MS: 3500,
 };
-
-/** Heroicons outline "share" (same d= as shared-note icon in the file tree) */
-const SHARE_ICON_PATH = 'M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z';
-
-/**
- * Latin letters that Unicode decomposition cannot reduce to an ASCII base letter.
- * Accents come off "ó" and "ż" on their own, but "ł" and "ß" are indivisible, so
- * without this they read as punctuation: "żółty" would become "zo-ty".
- */
-const SLUG_TRANSLITERATIONS = {
-    'ł': 'l', 'ø': 'o', 'ß': 'ss', 'đ': 'd', 'ð': 'd', 'þ': 'th',
-    'æ': 'ae', 'œ': 'oe', 'ħ': 'h', 'ı': 'i', 'ŧ': 't',
-};
-const SLUG_TRANSLITERATION_RE = new RegExp(`[${Object.keys(SLUG_TRANSLITERATIONS).join('')}]`, 'gi');
 
 // localStorage settings configuration - centralized definition of all persisted settings
 const LOCAL_SETTINGS = {
@@ -64,9 +46,8 @@ const LOCAL_SETTINGS = {
     sortMode: { key: 'sortMode', type: 'string', default: 'a-z' },
     newButtonAction: {
         key: 'newButtonAction', type: 'string', default: 'chooser',
-        valid: ['chooser', 'note', 'folder', 'template', 'drawing']
+        valid: ['chooser', 'note', 'folder', 'drawing']
     },
-    lastUsedTemplate: { key: 'lastUsedTemplate', type: 'string', default: '' },
     // Number settings with validation
     sidebarWidth: { key: 'sidebarWidth', type: 'number', default: CONFIG.DEFAULT_SIDEBAR_WIDTH, min: 200, max: 600 },
     editorWidth: { key: 'editorWidth', type: 'number', default: 50, min: 20, max: 80 },
@@ -301,8 +282,6 @@ function noteApp() {
         autosaveDelayMs: CONFIG.AUTOSAVE_DELAY,  // hydrated from /api/config in loadConfig()
         defaultTheme: CONFIG.DEFAULT_THEME,      // hydrated from /api/config in loadConfig()
         uploadMaxNoteMb: CONFIG.UPLOAD_MAX_NOTE_MB, // hydrated from /api/config in loadConfig()
-        // Optional public origin for share links; empty keeps window.location.origin.
-        sharePublicOrigin: '',
         notes: [],
 
         // True while /api/notes is in flight. Drives the "Loading your vault…"
@@ -344,13 +323,14 @@ function noteApp() {
         favoritesExpanded: true,
         saveTimeout: null,
         
-        // Note lookup maps for O(1) wikilink resolution (built on loadNotes)
+        // Note lookup maps for O(1) wikilink resolution (built on loadNotes).
+        // Values are the note's URL path (path without .md). Mirrors the rule
+        // order of vault.LinkResolver: see resolveWikiLink().
         _noteLookup: {
-            byPath: new Map(),           // path -> true
-            byPathLower: new Map(),      // path.toLowerCase() -> true
-            byName: new Map(),           // name (without .md) -> true  
-            byNameLower: new Map(),      // name.toLowerCase() -> true
-            byEndPath: new Map(),        // '/filename' and '/filename.md' -> true
+            byPath: new Map(),           // path (with/without .md) -> urlPath
+            byPathLower: new Map(),      // path.toLowerCase() -> urlPath
+            byName: new Map(),           // stem (with/without .md) -> urlPath
+            byNameLower: new Map(),      // stem.toLowerCase() -> urlPath
         },
         
         // Media lookup map for O(1) media wikilink resolution (built on loadNotes)
@@ -393,7 +373,7 @@ function noteApp() {
         sortMode: localStorage.getItem('sortMode') || 'a-z',
 
         // Icon rail / panel state
-        activePanel: 'files', // 'files', 'search', 'tags', 'outline', 'backlinks', 'shared', 'settings'
+        activePanel: 'files', // 'files', 'search', 'tags', 'outline', 'backlinks', 'settings'
         
         // Folder state
         folderTree: [],
@@ -437,16 +417,9 @@ function noteApp() {
         // in memory only — cleared on page reload, intentionally (matches typical editor UX).
         noteScrollPositions: {},
         
-        // Stats plugin state
-        statsPluginEnabled: false,
-        noteStats: null,
-        statsExpanded: false,
-        
         // Note metadata (frontmatter) state
         noteMetadata: null,
         metadataExpanded: false,
-        _lastFrontmatter: null, // Cache to avoid re-parsing unchanged frontmatter
-        
         // Sidebar resize state
         sidebarWidth: CONFIG.DEFAULT_SIDEBAR_WIDTH,
         isResizing: false,
@@ -475,14 +448,8 @@ function noteApp() {
         },
         _noteNameCounts: new Map(), // lower note stem -> count, for name-vs-path insertion
         
-        // Template state
-        showTemplateModal: false,
-        availableTemplates: [],
-        selectedTemplate: '',
-        newTemplateNoteName: '',
         newButtonAction: 'chooser',
         autoFillNoteTitle: false,
-        lastUsedTemplate: '',
         
         // New note / folder name modal (replaces window.prompt)
         showCreateNameModal: false,
@@ -504,20 +471,6 @@ function noteApp() {
         confirmModalConfirmLabel: '',
         confirmModalCancelLabel: '',
         _confirmModalResolve: null,
-        
-        // Share state
-        showShareModal: false,
-        shareInfo: null,
-        shareLoading: false,
-        showShareQR: false,
-        shareLinkCopied: false,
-        shareUseRandomLink: true,   // Off hands the link name to the user
-        shareSlug: '',              // Just the last URL segment, without /share/
-        shareSlugState: '',         // '' while unknown, 'ok', or a rejection reason code
-        _shareSlugCheckTid: null,
-        _shareResetTid: null,
-        _sharedNotePaths: new Set(),  // O(1) lookup for shared note indicators
-        _sharedNotePathsList: [], // sorted paths, mirrors Set for reactive sidebar panel
         
         // Quick Switcher state (Ctrl+Alt+P)
         showQuickSwitcher: false,
@@ -793,9 +746,6 @@ function noteApp() {
             // Note: Translations are preloaded synchronously before Alpine init (see index.html)
             // loadLocale() is only called when user changes language from settings
             await this.loadNotes();
-            await this.loadSharedNotePaths();
-            await this.loadTemplates();
-            await this.checkStatsPlugin();
             this.loadLocalSettings();
             
             // Parse URL and load specific note if provided
@@ -833,7 +783,6 @@ function noteApp() {
                     this.currentNoteName = '';
                     this.outline = [];
                     this.backlinks = [];
-                    this.shareInfo = null; // Reset share info
                     document.title = this.appName;
                     
                     // Restore homepage folder state if it was saved
@@ -1118,9 +1067,6 @@ function noteApp() {
                 if (Number.isFinite(config.uploadMaxNoteMb) && config.uploadMaxNoteMb > 0) {
                     this.uploadMaxNoteMb = config.uploadMaxNoteMb;
                 }
-                if (typeof config.sharePublicOrigin === 'string' && config.sharePublicOrigin) {
-                    this.sharePublicOrigin = config.sharePublicOrigin;
-                }
             } catch (error) {
                 console.error('Failed to load config:', error);
             }
@@ -1239,7 +1185,7 @@ function noteApp() {
             localStorage.setItem('sidebarPanelCollapsed', this.sidebarPanelCollapsed);
         },
 
-        // Switch the active sidebar panel (Files / Search / Tags / Outline / Backlinks / Shared
+        // Switch the active sidebar panel (Files / Search / Tags / Outline / Backlinks
         // / Settings) with smart toggle behaviour for the icon rail:
         //
         //   collapsed       + click any icon X  → expand + switch to X
@@ -1727,7 +1673,6 @@ function noteApp() {
             this._noteLookup.byPathLower.clear();
             this._noteLookup.byName.clear();
             this._noteLookup.byNameLower.clear();
-            this._noteLookup.byEndPath.clear();
             this._mediaLookup.clear();
             this._noteNameCounts.clear();
             
@@ -1765,8 +1710,8 @@ function noteApp() {
                 // Store all variations for fast lookup. The value is the note's URL
                 // path, so a wikilink can be resolved to a href and not just tested
                 // for existence. Name keys collide when two folders hold the same
-                // note name, so first match wins, the same rule the media map above
-                // and the name lookup in handleInternalLink already use.
+                // note name, so first match wins — the same rule the media map
+                // above uses.
                 setFirst(this._noteLookup.byPath, path, urlPath);
                 setFirst(this._noteLookup.byPath, urlPath, urlPath);
                 setFirst(this._noteLookup.byPathLower, pathLower, urlPath);
@@ -1775,35 +1720,49 @@ function noteApp() {
                 setFirst(this._noteLookup.byName, nameWithoutMd, urlPath);
                 setFirst(this._noteLookup.byNameLower, nameLower, urlPath);
                 setFirst(this._noteLookup.byNameLower, nameWithoutMdLower, urlPath);
-                
-                // End path matching (for /folder/note style links)
-                setFirst(this._noteLookup.byEndPath, '/' + nameWithoutMdLower, urlPath);
-                setFirst(this._noteLookup.byEndPath, '/' + nameLower, urlPath);
             }
         },
         
-        // Resolve a wikilink target to the target note's URL path (O(1) lookup)
-        // Returns the path without its .md extension, or null when nothing matches
-        resolveWikiLink(linkTarget) {
-            const targetLower = linkTarget.toLowerCase();
-            
-            // Check all lookup maps
+        // Resolve a wikilink or markdown-link target to the target note's URL
+        // path (path without .md), or null when nothing matches.
+        //
+        // The single rule set for every client-side resolution (preview
+        // renderer, click navigation), mirroring the backend's
+        // vault.LinkResolver in the same order:
+        //   1. relative to the source note's folder (plain names only),
+        //   2. path from the vault root (exact, then case-insensitive),
+        //   3. note stem, so [[My Note]] works from anywhere.
+        // It stays client-side because the live preview resolves links on
+        // every keystroke, where a round trip would be visible.
+        resolveWikiLink(linkTarget, sourceFolder = '') {
+            const target = (linkTarget || '').trim();
+            if (!target) return null;
+            const targetLower = target.toLowerCase();
+            const byPath = this._noteLookup.byPath;
+            const byPathLower = this._noteLookup.byPathLower;
+
+            // 1. Relative to the source note's folder
+            if (sourceFolder && !target.includes('/')) {
+                const rel = sourceFolder + '/' + target;
+                const relLower = rel.toLowerCase();
+                const relHit =
+                    byPath.get(rel) ??
+                    byPath.get(rel + '.md') ??
+                    byPathLower.get(relLower) ??
+                    byPathLower.get(relLower + '.md');
+                if (relHit) return relHit;
+            }
+
+            // 2. Vault root  3. note stem
             return (
-                this._noteLookup.byPath.get(linkTarget) ??
-                this._noteLookup.byPath.get(linkTarget + '.md') ??
-                this._noteLookup.byPathLower.get(targetLower) ??
-                this._noteLookup.byPathLower.get(targetLower + '.md') ??
-                this._noteLookup.byName.get(linkTarget) ??
+                byPath.get(target) ??
+                byPath.get(target + '.md') ??
+                byPathLower.get(targetLower) ??
+                byPathLower.get(targetLower + '.md') ??
+                this._noteLookup.byName.get(target) ??
                 this._noteLookup.byNameLower.get(targetLower) ??
-                this._noteLookup.byEndPath.get('/' + targetLower) ??
-                this._noteLookup.byEndPath.get('/' + targetLower + '.md') ??
                 null
             );
-        },
-        
-        // Fast O(1) check if a wikilink target exists
-        wikiLinkExists(linkTarget) {
-            return this.resolveWikiLink(linkTarget) !== null;
         },
         
         // Resolve media wikilink to full path (O(1) lookup)
@@ -2097,179 +2056,12 @@ function noteApp() {
             this.applyFilters();
         },
         
-        // ========================================================================
-        // Template Methods
-        // ========================================================================
-        
-        // Load available templates from _templates folder
-        async loadTemplates() {
-            try {
-                const response = await fetch('/api/templates');
-                const data = await response.json();
-                this.availableTemplates = data.templates || [];
-            } catch (error) {
-                ErrorHandler.handle('load templates', error, false); // Optional: no toast
-            }
-        },
-        
-        // Create a new note from a template
-        async createNoteFromTemplate() {
-            if (!this.selectedTemplate || !this.newTemplateNoteName.trim()) {
-                return;
-            }
-            
-            try {
-                // Validate the note name
-                const validation = FilenameValidator.validateFilename(this.newTemplateNoteName);
-                if (!validation.valid) {
-                    this.toast(this.getValidationErrorMessage(validation, 'note'), { type: 'warning' });
-                    return;
-                }
-                
-                // Determine the note path based on dropdown context
-                let notePath = validation.sanitized;
-                if (!notePath.endsWith('.md')) {
-                    notePath += '.md';
-                }
-                
-                const targetFolder = this.inferredNewItemTargetFolder();
-                
-                // If we have a target folder, create note in that folder
-                if (targetFolder) {
-                    notePath = `${targetFolder}/${notePath}`;
-                }
-                
-                // CRITICAL: Check if note already exists
-                if (this.notePathTaken(notePath)) {
-                    this.toast(this.t('notes.already_exists', { name: validation.sanitized }), { type: 'warning' });
-                    return;
-                }
-                
-                // Optimistic stub: add empty entry so sidebar updates instantly.
-                // Server rendering may inject content/tags; loadNote() fetches the
-                // real body and tags are refreshed via loadTagsDebounced below.
-                this._optimisticAddNote(notePath, { content: '' });
-                const folderPart = notePath.includes('/') ? notePath.substring(0, notePath.lastIndexOf('/')) : '';
-                if (folderPart) this.expandedFolders.add(folderPart);
-                this._rebuildTreeAfterMutation();
-                
-                try {
-                    const response = await fetch('/api/templates/create-note', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            templateName: this.selectedTemplate,
-                            notePath: notePath
-                        })
-                    });
-                    if (!response.ok) {
-                        const error = await response.json();
-                        throw new Error(error.detail || this.t('templates.create_failed'));
-                    }
-                    const data = await response.json();
-                    
-                    this.lastUsedTemplate = this.selectedTemplate;
-                    try { localStorage.setItem('lastUsedTemplate', this.selectedTemplate); } catch (_) {}
-                    
-                    this.showTemplateModal = false;
-                    this.selectedTemplate = '';
-                    this.newTemplateNoteName = '';
-                    
-                    await this.loadNote(data.path);
-                    this.focusEditorForNewNote();
-                    this.loadTagsDebounced();
-                } catch (err) {
-                    this.toast(err.message || this.t('templates.create_failed'), { type: 'error' });
-                    await this.loadNotes({ silent: true });
-                }
-            } catch (error) {
-                ErrorHandler.handle('create note from template', error);
-            }
-        },
-        
         // Clear all tag filters
         clearTagFilters() {
             this.selectedTags = [];
             
             // Apply unified filtering
             this.applyFilters();
-        },
-        
-        // ========================================================================
-        // Outline (TOC) Methods
-        // ========================================================================
-        
-        // Extract headings from markdown content for the outline
-        extractOutline(content) {
-            if (!content) {
-                this.outline = [];
-                this.backlinks = [];
-                return;
-            }
-            
-            const headings = [];
-            const lines = content.split('\n');
-            const slugCounts = {}; // Track duplicate slugs
-            
-            // Skip frontmatter and code blocks
-            let inFrontmatter = false;
-            let inCodeBlock = false;
-            
-            for (let i = 0; i < lines.length; i++) {
-                const line = lines[i];
-                
-                // Handle frontmatter
-                if (i === 0 && line.trim() === '---') {
-                    inFrontmatter = true;
-                    continue;
-                }
-                if (inFrontmatter) {
-                    if (line.trim() === '---') {
-                        inFrontmatter = false;
-                    }
-                    continue;
-                }
-                
-                // Handle fenced code blocks (``` or ~~~)
-                if (line.trim().startsWith('```') || line.trim().startsWith('~~~')) {
-                    inCodeBlock = !inCodeBlock;
-                    continue;
-                }
-                if (inCodeBlock) {
-                    continue;
-                }
-                
-                // Match heading lines (# to ######)
-                const match = line.match(/^(#{1,6})\s+(.+)$/);
-                if (match) {
-                    const level = match[1].length;
-                    const text = match[2].trim();
-                    
-                    // Generate slug (GitHub-style)
-                    let slug = text
-                        .toLowerCase()
-                        .replace(/[^\w\s-]/g, '') // Remove special chars
-                        .replace(/\s+/g, '-')     // Spaces to dashes
-                        .replace(/-+/g, '-');     // Multiple dashes to single
-                    
-                    // Handle duplicate slugs
-                    if (slugCounts[slug] !== undefined) {
-                        slugCounts[slug]++;
-                        slug = `${slug}-${slugCounts[slug]}`;
-                    } else {
-                        slugCounts[slug] = 0;
-                    }
-                    
-                    headings.push({
-                        level,
-                        text,
-                        slug,
-                        line: i + 1 // 1-indexed line number
-                    });
-                }
-            }
-            
-            this.outline = headings;
         },
         
         // Scroll to a heading in the editor or preview
@@ -2491,89 +2283,6 @@ function noteApp() {
             return modified.toLocaleDateString(this.currentLocale, { month: 'short', day: 'numeric' });
         },
         
-        // Parse tags from markdown content (matches backend logic — keep in
-        // sync with vault.ParseTags): "tags:"/"tag:" key is case-insensitive,
-        // values may be inline arrays, single values or YAML lists, quotes are
-        // stripped, and a UTF-8 BOM / blank lines before "---" are tolerated
-        // (String.trim() removes U+FEFF, which is why parsing runs on the
-        // trimmed content below).
-        parseTagsFromContent(content) {
-            if (!content) return [];
-            
-            try {
-                const trimmed = content.trim();
-                if (!trimmed.startsWith('---')) return [];
-                
-                const lines = trimmed.split('\n');
-                if (lines[0].trim() !== '---') return [];
-                
-                // Find closing ---
-                let endIdx = -1;
-                for (let i = 1; i < lines.length; i++) {
-                    if (lines[i].trim() === '---') {
-                        endIdx = i;
-                        break;
-                    }
-                }
-                
-                if (endIdx === -1) return [];
-                
-                const frontmatterLines = lines.slice(1, endIdx);
-                const tags = [];
-                let inTagsList = false;
-                
-                // Normalize one raw tag value: trim, drop quotes, lowercase.
-                const cleanTag = (t) => {
-                    t = (t || '').trim().toLowerCase();
-                    if (t.length >= 2 && (t[0] === '"' || t[0] === "'") && t[t.length - 1] === t[0]) {
-                        t = t.slice(1, -1).trim();
-                    }
-                    return t;
-                };
-                
-                for (const line of frontmatterLines) {
-                    const stripped = line.trim();
-                    
-                    if (!inTagsList) {
-                        const cut = stripped.indexOf(':');
-                        if (cut === -1) continue;
-                        const key = stripped.substring(0, cut).trim().toLowerCase();
-                        if (key !== 'tags' && key !== 'tag') continue;
-                        
-                        const rest = stripped.substring(cut + 1).trim();
-                        
-                        // Inline array: tags: [tag1, tag2]
-                        if (rest.startsWith('[') && rest.endsWith(']')) {
-                            for (const p of rest.substring(1, rest.length - 1).split(',')) {
-                                const t = cleanTag(p);
-                                if (t) tags.push(t);
-                            }
-                            break;
-                        } else if (rest) {
-                            const t = cleanTag(rest);
-                            if (t) tags.push(t);
-                            break;
-                        }
-                        inTagsList = true;
-                        continue;
-                    }
-                    
-                    // Inside a multiline "tags:" block.
-                    if (stripped.startsWith('-')) {
-                        const t = cleanTag(stripped.substring(1));
-                        if (t && !t.startsWith('#')) tags.push(t);
-                    } else if (stripped && !stripped.startsWith('#')) {
-                        break;
-                    }
-                }
-                
-                return [...new Set(tags)].sort();
-            } catch (e) {
-                console.error('Error parsing tags:', e);
-                return [];
-            }
-        },
-        
         // Build folder tree structure
         buildFolderTree() {
             const tree = {};
@@ -2759,7 +2468,7 @@ function noteApp() {
                 type: inferredType,
                 size: size != null ? size : (content ? new Blob([content]).size : 0),
                 modified: this._isoNow(),
-                tags: (inferredType === 'note' && content) ? this.parseTagsFromContent(content) : [],
+                tags: [],
             });
         },
         
@@ -2992,9 +2701,6 @@ function noteApp() {
             const isCurrentMedia = this.currentMedia === note.path;
             const isCurrent = isMediaFile ? isCurrentMedia : isCurrentNote;
             
-            // Share icon for shared notes
-            const isShared = !isMediaFile && this.isNoteShared(note.path);
-            const shareIcon = isShared ? `<svg aria-hidden="true" style="display: inline-block; width: 12px; height: 12px; vertical-align: middle; margin-right: 2px; opacity: 0.7;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="${SHARE_ICON_PATH}"></path></svg>` : '';
             const icon = this.getMediaIcon(note.type);
             const deleteTitle = !isMediaFile
                 ? this.t('toolbar.delete_note')
@@ -3016,7 +2722,7 @@ function noteApp() {
                     onmouseover="window.$root.handleItemHover(this, true)"
                     onmouseout="window.$root.handleItemHover(this, false)"
                 >
-                    <span class="truncate" style="display: block; padding-right: 30px;" title="${esc(note.name)}">${shareIcon}${icon}${icon ? ' ' : ''}${esc(note.name)}</span>
+                    <span class="truncate" style="display: block; padding-right: 30px;" title="${esc(note.name)}">${icon}${icon ? ' ' : ''}${esc(note.name)}</span>
                     <button 
                         data-path="${esc(note.path)}"
                         data-name="${esc(note.name)}"
@@ -3407,6 +3113,9 @@ function noteApp() {
                     body: JSON.stringify({ content })
                 });
                 if (!response.ok) throw new Error('Server returned error');
+                const data = await response.json();
+                const created = this.notes.find(n => n.path === targetPath);
+                if (created) created.tags = data.tags || [];
             } catch (error) {
                 this._optimisticRemoveNote(targetPath);
                 this._rebuildTreeAfterMutation();
@@ -3578,7 +3287,6 @@ function noteApp() {
             this.noteContent = '';
             this.currentMedia = mediaPath; // Reuse currentMedia for all media
             this.currentMediaType = mediaType || this.getMediaType(mediaPath) || 'image';
-            this.shareInfo = null; // Reset share info
             this.viewMode = 'preview'; // Use preview mode to show media
             
             // Update browser tab title
@@ -4617,6 +4325,10 @@ function noteApp() {
         /**
          * Every task in the note to the opposite of the clicked one, so ticking one box
          * off a mixed list ticks the rest. A single assignment, so one Ctrl+Z undoes it.
+         *
+         * The change touches many lines at once, which the single-shot replace
+         * endpoint cannot express, so it goes through the regular (debounced,
+         * conflict-checked) whole-note save.
          */
         _toggleAllTasksFromPreview(box) {
             const index = parseInt(box.getAttribute('data-task-index'), 10);
@@ -4653,6 +4365,36 @@ function noteApp() {
             return true;
         },
 
+        /**
+         * Persist a single toggled task line through /api/notes/replace: the
+         * endpoint patches exactly that line against the on-disk content, so a
+         * click never overwrites edits made elsewhere (another editor, a sync
+         * tool) the way a whole-note save would. Falls back to the regular
+         * save when the line is not unique in the note (the endpoint answers
+         * 409) or the request fails.
+         */
+        async _persistTaskToggle(oldLine, newLine) {
+            try {
+                const response = await fetch('/api/notes/replace', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: this.currentNote, old_str: oldLine, new_str: newLine })
+                });
+                if (!response.ok) {
+                    this.autoSave();
+                    return;
+                }
+                const result = await response.json();
+                // The patched line is now the disk state the next whole-note
+                // save is compared against.
+                this.noteBaseHash = result.hash || null;
+                this.lastSaved = true;
+            } catch (error) {
+                console.error('Failed to replace task line:', error);
+                this.autoSave();
+            }
+        },
+
         /** Tick/untick the clicked task item in the source. True when it was a task. */
         toggleTaskFromPreview(event) {
             const box = this._taskBoxForClick(event);
@@ -4671,15 +4413,18 @@ function noteApp() {
             if (lineIdx === undefined) return false;
 
             const lines = this.noteContent.split('\n');
-            const toggled = lines[lineIdx].replace(
+            const oldLine = lines[lineIdx];
+            const toggled = oldLine.replace(
                 TASK_ITEM_RE,
                 (match, prefix, state) => prefix + (state === ' ' ? 'x' : ' ')
             );
-            if (toggled === lines[lineIdx]) return false;
+            if (toggled === oldLine) return false;
 
             lines[lineIdx] = toggled;
             this.noteContent = lines.join('\n');
-            this.autoSave();
+            if (!this.isUndoRedo) this.pushToHistory();
+            this.lastSaved = false;
+            this._persistTaskToggle(oldLine, toggled);
             return true;
         },
 
@@ -4722,49 +4467,26 @@ function noteApp() {
             // Skip if no path
             if (!notePath) return;
             
-            // Find the note by path (try exact match first, then with .md extension)
+            // Exact match first (covers media files and direct vault paths).
             let targetNote = this.notes.find(n => 
                 n.path === notePath || 
                 n.path === notePath + '.md'
             );
             
-            if (!targetNote && this.currentNote) {
-                // Resolve href relative to the current note's folder (standard
-                // markdown behavior). Fixes `[X](sibling.md)` inside a subfolder
-                // note — the vault-root exact match above misses it. Issue #262.
-                const resolved = this.resolveMarkdownMediaPathForNote(this.currentNote, notePath);
-                if (resolved && resolved !== notePath) {
-                    const resolvedLower = resolved.toLowerCase();
+            if (!targetNote) {
+                // Otherwise use the single resolver shared with the preview
+                // renderer (relative to the current note's folder, then vault
+                // root, then note stem — mirrors vault.LinkResolver).
+                const sourceFolder = this.currentNote && this.currentNote.includes('/')
+                    ? this.currentNote.substring(0, this.currentNote.lastIndexOf('/'))
+                    : '';
+                const resolved = this.resolveWikiLink(notePath, sourceFolder);
+                if (resolved !== null) {
                     targetNote = this.notes.find(n =>
                         n.path === resolved ||
-                        n.path === resolved + '.md' ||
-                        n.path.toLowerCase() === resolvedLower ||
-                        n.path.toLowerCase() === resolvedLower + '.md'
+                        n.path === resolved + '.md'
                     );
                 }
-            }
-            
-            if (!targetNote) {
-                // Try to find by name (in case link uses just the note name without path).
-                // n.name stores the stem (no .md), so also compare against notePath
-                // with any .md suffix stripped — otherwise `[X](FILE.md)` never
-                // matches the "FILE" name. Issue #262.
-                const notePathStem = notePath.replace(/\.md$/i, '');
-                const notePathStemLower = notePathStem.toLowerCase();
-                targetNote = this.notes.find(n => 
-                    n.name === notePath || 
-                    n.name === notePathStem ||
-                    n.name.toLowerCase() === notePath.toLowerCase() ||
-                    n.name.toLowerCase() === notePathStemLower
-                );
-            }
-            
-            if (!targetNote) {
-                // Last resort: case-insensitive path matching
-                targetNote = this.notes.find(n => 
-                    n.path.toLowerCase() === notePath.toLowerCase() ||
-                    n.path.toLowerCase() === (notePath + '.md').toLowerCase()
-                );
             }
             
             if (targetNote) {
@@ -4888,7 +4610,6 @@ function noteApp() {
                         const errorData = await response.json().catch(() => ({}));
                         throw new Error(errorData.detail || this.t('move.failed_folder'));
                     }
-                    await this.loadSharedNotePaths();
                 } catch (error) {
                     console.error('Failed to move folder:', error);
                     this.toast(error.message || this.t('move.failed_folder'), { type: 'error' });
@@ -4933,7 +4654,6 @@ function noteApp() {
                     const errorKey = isMedia ? 'move.failed_media' : 'move.failed_note';
                     throw new Error(errorData.detail || this.t(errorKey));
                 }
-                if (isNote) await this.loadSharedNotePaths();
             } catch (error) {
                 console.error(`Failed to move ${isMedia ? 'media' : 'note'}:`, error);
                 this.toast(error.message || this.t(isMedia ? 'move.failed_media' : 'move.failed_note'), { type: 'error' });
@@ -4983,14 +4703,13 @@ function noteApp() {
                 // ones. See the post-$nextTick block for the full timing rationale.
                 this.currentNoteName = notePath.split('/').pop().replace('.md', '');
                 this.closeMediaViewer(); // Clear image viewer when loading a note
-                this.shareInfo = null; // Reset share info for new note
                 
                 // Update browser tab title
                 document.title = `${this.currentNoteName} - ${this.appName}`;
                 this.lastSaved = false;
                 
-                // Extract outline for TOC panel
-                this.extractOutline(data.content);
+                // Outline and frontmatter parsed server-side
+                this.outline = data.outline || [];
 
                 // Store backlinks from API response
                 this.backlinks = data.backlinks || [];
@@ -5022,13 +4741,8 @@ function noteApp() {
                     );
                 }
                 
-                // Calculate stats if plugin enabled
-                if (this.statsPluginEnabled) {
-                    this.calculateStats();
-                }
-                
-                // Parse frontmatter metadata
-                this.parseMetadata();
+                // Frontmatter parsed server-side
+                this.noteMetadata = data.frontmatter || null;
                 
                 // Store search query for highlighting
                 if (searchQuery) {
@@ -5336,7 +5050,6 @@ function noteApp() {
             switch (this.newButtonAction) {
                 case 'note':     this.createNote();         break;
                 case 'folder':   this.createFolder();       break;
-                case 'template': this.openTemplateModal();  break;
                 case 'drawing':  this.createNewDrawing();   break;
                 default:         this._openNewDropdownChooser(event);
             }
@@ -5360,26 +5073,6 @@ function noteApp() {
                 }
                 
                 this.dropdownPosition = { top, left };
-            }
-        },
-        
-        openTemplateModal() {
-            this.showNewDropdown = false;
-            this.mobileSidebarOpen = false;
-            const hasLastUsed = !!this.lastUsedTemplate &&
-                this.availableTemplates.some(t => t.name === this.lastUsedTemplate);
-            this.selectedTemplate = hasLastUsed ? this.lastUsedTemplate : '';
-            this.newTemplateNoteName = this.autoFillNoteTitle ? this._autoTitleTimestamp() : '';
-            this.showTemplateModal = true;
-            // Only steal focus when the modal is one-Enter-away from submission.
-            if (hasLastUsed) {
-                this.$nextTick(() => {
-                    const el = document.getElementById('template-note-name-input');
-                    if (el) {
-                        el.focus();
-                        el.select();
-                    }
-                });
             }
         },
         
@@ -5717,12 +5410,10 @@ function noteApp() {
                     body: JSON.stringify({ oldPath: folderPath, newPath: newPath })
                 });
                 if (!response.ok) throw new Error('Server returned error');
-                await this.loadSharedNotePaths();
                 return true;
             } catch (error) {
                 ErrorHandler.handle('rename folder', error);
                 await this.loadNotes({ silent: true });
-                await this.loadSharedNotePaths();
                 return false;
             }
         },
@@ -5778,16 +5469,8 @@ function noteApp() {
                 this.pushToHistory();
             }
             
-            // Calculate stats in real-time if plugin enabled
-            if (this.statsPluginEnabled) {
-                this.calculateStats();
-            }
-            
-            // Parse metadata in real-time
-            this.parseMetadata();
-            
-            // Update outline (TOC) in real-time
-            this.extractOutline(this.noteContent);
+            // Outline and metadata panels refresh from the save response
+            // (server-side parsing), see saveNote().
             
             this.saveTimeout = setTimeout(() => {
                 // Commit to undo history when autosave triggers (same debounce timing)
@@ -5856,11 +5539,6 @@ function noteApp() {
             this.isUndoRedo = true;
             this.noteContent = previousState.content;
             
-            // Recalculate stats with new content
-            if (this.statsPluginEnabled) {
-                this.calculateStats();
-            }
-            
             // Restore cursor position from the state we're going back to
             this.$nextTick(() => {
                 this.saveNote();
@@ -5895,11 +5573,6 @@ function noteApp() {
             // Apply next state
             this.isUndoRedo = true;
             this.noteContent = nextState.content;
-            
-            // Recalculate stats with new content
-            if (this.statsPluginEnabled) {
-                this.calculateStats();
-            }
             
             // Restore cursor position from the state we're going forward to
             this.$nextTick(() => {
@@ -6175,6 +5848,9 @@ function noteApp() {
                     const result = await response.json();
                     if (notePath === this.currentNote) {
                         this.noteBaseHash = result.hash || null;
+                        // Refresh TOC and metadata panels from the server-parsed save response
+                        this.outline = result.outline || [];
+                        this.noteMetadata = result.frontmatter || null;
                     }
                     this.lastSaved = true;
                     
@@ -6184,8 +5860,7 @@ function noteApp() {
                         note.modified = new Date().toISOString();
                         note.size = new Blob([this.noteContent]).size;
                         
-                        // Parse tags from content
-                        note.tags = this.parseTagsFromContent(this.noteContent);
+                        note.tags = result.tags || [];
                     }
                     
                     // Reload tags to update sidebar counts (debounced to prevent spam)
@@ -6269,9 +5944,7 @@ function noteApp() {
             }
             
             // Optimistic rename: rewrite local path now + favorites + current
-            // note pointer. The file itself moves through /api/notes/move so a
-            // share token follows it. POST-then-DELETE revoked the link, because
-            // delete means the note is gone.
+            // note pointer. The file itself moves through /api/notes/move.
             this._optimisticRenameNote(oldPath, newPath);
             this._rebuildTreeAfterMutation();
             
@@ -6318,11 +5991,9 @@ function noteApp() {
                     const saved = await saveResponse.json();
                     this.noteBaseHash = saved.hash || null;
                 }
-                await this.loadSharedNotePaths();
             } catch (error) {
                 ErrorHandler.handle('rename note', error);
                 await this.loadNotes({ silent: true });
-                await this.loadSharedNotePaths();
             }
         },
         
@@ -6798,18 +6469,21 @@ function noteApp() {
                     const linkTarget = target.trim();
                     const linkText = displayText ? displayText.trim() : linkTarget;
                     
-                    // Fast O(1) lookup using pre-built lookup maps
-                    // Handle section anchors: extract base note path
+                    // Resolve through the single resolver shared with click
+                    // navigation (mirrors vault.LinkResolver). The raw target is
+                    // kept when it resolves to nothing: that is what the
+                    // create-from-link prompt offers as the path of the new note.
                     const hashIndex = linkTarget.indexOf('#');
                     const basePath = hashIndex !== -1 ? linkTarget.substring(0, hashIndex) : linkTarget;
                     const anchor = hashIndex !== -1 ? linkTarget.substring(hashIndex) : '';
-                    const resolvedPath = basePath === '' ? null : self.resolveWikiLink(basePath);
+                    const sourceFolder = self.currentNote && self.currentNote.includes('/')
+                        ? self.currentNote.substring(0, self.currentNote.lastIndexOf('/'))
+                        : '';
+                    const resolvedPath = basePath === '' ? null : self.resolveWikiLink(basePath, sourceFolder);
                     const noteExists = basePath === '' || resolvedPath !== null;
                     
-                    // A wikilink names a note, not a location relative to the note it is
-                    // written in, so the href has to be absolute. Left as written when it
-                    // resolves to nothing: that raw target is what the create-from-link
-                    // prompt offers as the path of the new note.
+                    // The href has to be absolute (a resolved note path), while an
+                    // unresolved target stays as written.
                     const hrefTarget = resolvedPath !== null ? '/' + resolvedPath + anchor : linkTarget;
                     
                     // Escape special chars: href needs quote escaping, text needs HTML escaping
@@ -7900,261 +7574,6 @@ function noteApp() {
             preview.addEventListener('scroll', this._previewScrollHandler);
         },
         
-        // Check if stats plugin is enabled
-        async checkStatsPlugin() {
-            try {
-                const response = await fetch('/api/plugins');
-                const data = await response.json();
-                const statsPlugin = data.plugins.find(p => p.id === 'note_stats');
-                this.statsPluginEnabled = statsPlugin && statsPlugin.enabled;
-                
-                // Calculate stats for current note if enabled
-                if (this.statsPluginEnabled && this.noteContent) {
-                    this.calculateStats();
-                }
-            } catch (error) {
-                console.error('Failed to check stats plugin:', error);
-                this.statsPluginEnabled = false;
-            }
-        },
-        
-        // Calculate note statistics (client-side)
-        calculateStats() {
-            if (!this.statsPluginEnabled || !this.noteContent) {
-                this.noteStats = null;
-                return;
-            }
-            
-            const content = this.noteContent;
-            
-            // Word count
-            const words = (content.match(/\S+/g) || []).length;
-            
-            // Character count
-            const chars = content.replace(/\s/g, '').length;
-            const totalChars = content.length;
-            
-            // Reading time (200 words per minute)
-            const readingTime = Math.max(1, Math.round(words / 200));
-            
-            // Line count
-            const lines = content.split('\n').length;
-            
-            // Paragraph count
-            const paragraphs = content.split('\n\n').filter(p => p.trim()).length;
-            
-            // Sentences: punctuation [.!?]+ followed by space or end-of-string
-            const sentences = (content.match(/[.!?]+(?:\s|$)/g) || []).length;
-            
-            // List items: lines starting with -, *, + or a number (e.g. 1., 10.), excluding tasks [-]
-            const listItems = (content.match(/^\s*(?:[-*+]|\d+\.)\s+(?!\[)/gm) || []).length;
-            
-            // Tables: markdown table separator rows (| --- | --- |)
-            const tables = (content.match(/^\s*\|(?:\s*:?-+:?\s*\|){1,}\s*$/gm) || []).length;
-            
-            // Link count (standard markdown links)
-            const markdownLinkMatches = content.match(/\[([^\]]+)\]\(([^\)]+)\)/g) || [];
-            const markdownLinks = markdownLinkMatches.length;
-            // Test the target, not the whole link: a label mentioning ".md" is not an internal link.
-            const markdownInternalLinks = markdownLinkMatches.filter(l => /\]\([^)]+\.md(?:#[^)]*)?\)$/.test(l)).length;
-            
-            // Wikilink count ([[note]] or [[note|display text]] format)
-            const wikilinks = (content.match(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g) || []).length;
-            
-            // Total links (markdown + wikilinks)
-            const links = markdownLinks + wikilinks;
-            const internalLinks = markdownInternalLinks + wikilinks; // All wikilinks are internal
-            
-            // Code blocks
-            const codeBlocks = (content.match(/```[\s\S]*?```/g) || []).length;
-            // Fences come out first: the ``` pairs around a block otherwise match
-            // the inline pattern and each block counts as an inline span as well.
-            const inlineCode = (content.replace(/```[\s\S]*?```/g, '').match(/`[^`]+`/g) || []).length;
-            
-            // Headings
-            const h1 = (content.match(/^# /gm) || []).length;
-            const h2 = (content.match(/^## /gm) || []).length;
-            const h3 = (content.match(/^### /gm) || []).length;
-            
-            // Tasks: found the same way the preview's clickable checkboxes are, so the
-            // panel counts exactly the boxes you can see and tick. A plain `- [x]` search
-            // would instead count examples inside code fences and frontmatter while
-            // missing every task on a *, + or numbered marker.
-            const contentLines = content.split('\n');
-            const taskLines = this._scanTaskLines(content);
-            const totalTasks = taskLines.length;
-            const completedTasks = taskLines.filter((i) => {
-                const state = contentLines[i].match(TASK_ITEM_RE);
-                return state && state[2] !== ' ';
-            }).length;
-            const pendingTasks = totalTasks - completedTasks;
-            const completionRate = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
-            
-            // Images
-            const images = (content.match(/!\[([^\]]*)\]\(([^\)]+)\)/g) || []).length;
-            
-            // Blockquotes
-            const blockquotes = (content.match(/^> /gm) || []).length;
-            
-            this.noteStats = {
-                words,
-                sentences,
-                characters: chars,
-                total_characters: totalChars,
-                reading_time_minutes: readingTime,
-                lines,
-                paragraphs,
-                list_items: listItems,
-                tables,
-                links,
-                internal_links: internalLinks,
-                external_links: links - internalLinks,
-                wikilinks,
-                code_blocks: codeBlocks,
-                inline_code: inlineCode,
-                headings: {
-                    h1,
-                    h2,
-                    h3,
-                    total: h1 + h2 + h3
-                },
-                tasks: {
-                    total: totalTasks,
-                    completed: completedTasks,
-                    pending: pendingTasks,
-                    completion_rate: completionRate
-                },
-                images,
-                blockquotes
-            };
-        },
-        
-        // Parse YAML frontmatter metadata from note content
-        parseMetadata() {
-            if (!this.noteContent) {
-                this.noteMetadata = null;
-                this._lastFrontmatter = null;
-                return;
-            }
-            
-            const content = this.noteContent;
-            
-            // Check if content starts with frontmatter
-            if (!content.trim().startsWith('---')) {
-                this.noteMetadata = null;
-                this._lastFrontmatter = null;
-                return;
-            }
-            
-            try {
-                const lines = content.split('\n');
-                if (lines[0].trim() !== '---') {
-                    this.noteMetadata = null;
-                    this._lastFrontmatter = null;
-                    return;
-                }
-                
-                // Find closing ---
-                let endIdx = -1;
-                for (let i = 1; i < lines.length; i++) {
-                    if (lines[i].trim() === '---') {
-                        endIdx = i;
-                        break;
-                    }
-                }
-                
-                if (endIdx === -1) {
-                    this.noteMetadata = null;
-                    this._lastFrontmatter = null;
-                    return;
-                }
-                
-                // Performance optimization: skip parsing if frontmatter unchanged
-                const frontmatterRaw = lines.slice(0, endIdx + 1).join('\n');
-                if (frontmatterRaw === this._lastFrontmatter) {
-                    return; // No change, keep existing metadata
-                }
-                this._lastFrontmatter = frontmatterRaw;
-                
-                const frontmatterLines = lines.slice(1, endIdx);
-                const metadata = {};
-                let currentKey = null;
-                let currentValue = [];
-                
-                for (const line of frontmatterLines) {
-                    // Check for new key: value pair (supports keys with hyphens/underscores)
-                    const keyMatch = line.match(/^([a-zA-Z_][\w-]*):\s*(.*)$/);
-                    
-                    if (keyMatch) {
-                        // Save previous key if exists
-                        if (currentKey) {
-                            metadata[currentKey] = this.parseYamlValue(currentValue.join('\n'));
-                        }
-                        
-                        currentKey = keyMatch[1];
-                        const value = keyMatch[2].trim();
-                        currentValue = [value];
-                    } else if (line.match(/^\s+-\s+/) && currentKey) {
-                        // List item continuation (e.g., "  - item")
-                        currentValue.push(line);
-                    } else if (line.startsWith('  ') && currentKey) {
-                        // Indented content (multiline value)
-                        currentValue.push(line);
-                    }
-                }
-                
-                // Save last key
-                if (currentKey) {
-                    metadata[currentKey] = this.parseYamlValue(currentValue.join('\n'));
-                }
-                
-                this.noteMetadata = Object.keys(metadata).length > 0 ? metadata : null;
-                
-            } catch (error) {
-                console.error('Failed to parse frontmatter:', error);
-                this.noteMetadata = null;
-                this._lastFrontmatter = null;
-            }
-        },
-        
-        // Parse a YAML value (handles arrays, strings, numbers, booleans)
-        parseYamlValue(value) {
-            if (!value || value.trim() === '') return null;
-            
-            value = value.trim();
-            
-            // Check for inline array: [item1, item2]
-            if (value.startsWith('[') && value.endsWith(']')) {
-                const inner = value.slice(1, -1);
-                return inner.split(',').map(s => s.trim().replace(/^["']|["']$/g, '')).filter(s => s);
-            }
-            
-            // Check for YAML list format (multiple lines starting with -)
-            if (value.includes('\n  -') || value.startsWith('  -')) {
-                const items = [];
-                const lines = value.split('\n');
-                for (const line of lines) {
-                    const match = line.match(/^\s*-\s*(.+)$/);
-                    if (match) {
-                        items.push(match[1].trim().replace(/^["']|["']$/g, ''));
-                    }
-                }
-                return items.length > 0 ? items : value;
-            }
-            
-            // Check for boolean
-            if (value.toLowerCase() === 'true') return true;
-            if (value.toLowerCase() === 'false') return false;
-            
-            // Check for number
-            if (/^-?\d+(\.\d+)?$/.test(value)) {
-                return parseFloat(value);
-            }
-            
-            // Return as string (remove quotes if present)
-            return value.replace(/^["']|["']$/g, '');
-        },
-        
         // Check if a string is a URL
         isUrl(str) {
             if (typeof str !== 'string') return false;
@@ -8559,48 +7978,6 @@ function noteApp() {
             }, 1500);
         },
         
-        // ============================================================================
-        // Share Functions
-        // ============================================================================
-        
-        // Load list of shared note paths (for visual indicators and Shared sidebar panel)
-        async loadSharedNotePaths() {
-            try {
-                const response = await fetch('/api/shared-notes');
-                if (response.ok) {
-                    const data = await response.json();
-                    this._sharedNotePaths = new Set(data.paths || []);
-                    this._syncSharedNotePathsList();
-                }
-            } catch (error) {
-                console.error('Failed to load shared note paths:', error);
-                this._sharedNotePaths = new Set();
-                this._sharedNotePathsList = [];
-            }
-        },
-
-        _syncSharedNotePathsList() {
-            this._sharedNotePathsList = [...this._sharedNotePaths].sort((a, b) =>
-                a.localeCompare(b, undefined, { sensitivity: 'base' })
-            );
-        },
-
-        /** Display rows for Shared notes panel: name + folder line (search-style) */
-        getSharedPanelItems() {
-            return this._sharedNotePathsList.map((path) => {
-                const noMd = path.replace(/\.md$/i, '');
-                const last = Math.max(noMd.lastIndexOf('/'), noMd.lastIndexOf('\\'));
-                const name = last < 0 ? noMd : noMd.slice(last + 1);
-                const folder = last < 0 ? '' : noMd.slice(0, last).replace(/\\/g, '/');
-                return { path, name, folder: folder || 'Root' };
-            });
-        },
-        
-        // Check if a note is currently shared (O(1) lookup)
-        isNoteShared(notePath) {
-            return this._sharedNotePaths.has(notePath);
-        },
-        
         // ============================================
         // Quick Switcher (Ctrl+Alt+P)
         // ============================================
@@ -8680,437 +8057,6 @@ function noteApp() {
         selectQuickSwitcherNote(note) {
             this.loadNote(note.path);
             this.closeQuickSwitcher();
-        },
-        
-        // Close share modal and reset state after animation
-        closeShareModal() {
-            this.showShareModal = false;
-            clearTimeout(this._shareSlugCheckTid);
-            // Delay state reset until modal is fully hidden. Reopening cancels it,
-            // otherwise a pending reset lands on the freshly loaded dialog and blanks
-            // it while it is on screen.
-            clearTimeout(this._shareResetTid);
-            this._shareResetTid = setTimeout(() => {
-                this.showShareQR = false;
-                this.shareInfo = null;
-                this.shareLoading = false;
-                this.shareUseRandomLink = true;
-                this.shareSlug = '';
-                this.shareSlugState = '';
-            }, 200);
-        },
-        
-        // Generate QR code for share URL
-        generateQRCode(url) {
-            if (!url || typeof qrcode === 'undefined') return '';
-            try {
-                const qr = qrcode(0, 'M'); // 0 = auto version, M = medium error correction
-                qr.addData(url);
-                qr.make();
-                return qr.createDataURL(4); // 4 = module size in pixels
-            } catch (e) {
-                console.error('QR code generation failed:', e);
-                return '';
-            }
-        },
-        
-        /**
-         * Correct the scheme and host of a server-generated share URL.
-         *
-         * The backend builds share URLs from request.base_url, whose scheme comes from
-         * the connection it actually received. Behind a TLS-terminating reverse proxy
-         * that connection is plain http, so the link comes back as http:// even though
-         * the note is reachable only over https. The browser is authoritative for the
-         * scheme and host it is currently on, so adopt those two and keep the server's
-         * path, which may carry a deployment prefix the frontend cannot infer.
-         *
-         * When sharePublicOrigin is configured (LAN browse, public share host), prefer
-         * that origin instead so the dialog / QR / clipboard show the outbound URL.
-         */
-        _localizeShareUrl(info) {
-            if (!info || typeof info.url !== 'string' || !info.url) return info;
-            try {
-                const src = new URL(info.url, window.location.href);
-                const origin = this.sharePublicOrigin || window.location.origin;
-                // Take the origin wholesale rather than assigning protocol/host
-                // separately: the URL host setter leaves an existing port in place when
-                // the new value carries none, which would yield https://host:8000/...
-                info.url = new URL(
-                    src.pathname + src.search + src.hash,
-                    origin
-                ).toString();
-            } catch (e) {
-                // Keep the server's value rather than risk producing a broken link.
-                console.warn('Could not normalize share URL:', e);
-            }
-            return info;
-        },
-
-        /**
-         * Drop YAML frontmatter so a suggested link name comes from the prose.
-         */
-        _bodyWithoutFrontmatter(content) {
-            const text = typeof content === 'string' ? content : '';
-            const lines = text.split('\n');
-            if (lines[0]?.trim() !== '---') return text;
-            for (let i = 1; i < lines.length; i++) {
-                if (lines[i].trim() === '---') return lines.slice(i + 1).join('\n');
-            }
-            return text;
-        },
-
-        /**
-         * Spell text with the ASCII letters a share slug can hold: café -> cafe,
-         * straße -> strasse. Case is kept for callers that care about it, and
-         * characters with no Latin reading are left in place for them to deal with.
-         */
-        _toSlugAlphabet(text) {
-            return (text || '')
-                .replace(SLUG_TRANSLITERATION_RE, (ch) => {
-                    const mapped = SLUG_TRANSLITERATIONS[ch.toLowerCase()];
-                    if (!mapped) return ch;
-                    return ch === ch.toLowerCase() ? mapped : mapped[0].toUpperCase() + mapped.slice(1);
-                })
-                .normalize('NFKD')
-                .replace(/[\u0300-\u036f]/g, '');
-        },
-
-        /** Reduce text to the token alphabet the backend accepts. */
-        _slugify(text) {
-            return this._toSlugAlphabet(text)
-                .replace(/[^A-Za-z0-9]+/g, '-')
-                .replace(/^-+|-+$/g, '')
-                .slice(0, CONFIG.SHARE_SLUG_MAX_LENGTH)
-                .replace(/-+$/g, '')
-                .toLowerCase();
-        },
-
-        /**
-         * Propose a link name from the note's opening words, falling back to its
-         * filename when those are all markup or a script the URL alphabet can't hold.
-         */
-        _suggestShareSlug() {
-            const body = this._bodyWithoutFrontmatter(this.noteContent);
-            const openingWords = (text) => text
-                .replace(/^#{1,6}\s+/gm, '')
-                .replace(/[*_`~>\[\]()!|]/g, ' ')
-                .split(/\s+/)
-                .filter(Boolean)
-                .slice(0, CONFIG.SHARE_SLUG_WORDS)
-                .join(' ');
-            // The heading on its own reads best. Reaching into the rest of the body is
-            // for notes that open straight into prose, or whose title is a word or two.
-            const firstLine = body.split('\n').find(line => line.trim()) || '';
-            for (const candidate of [openingWords(firstLine), openingWords(body)]) {
-                const slug = this._slugify(candidate);
-                if (slug.length >= CONFIG.SHARE_SLUG_MIN_LENGTH) return slug;
-            }
-            const filename = (this.currentNote || '').split('/').pop().replace(/\.md$/, '');
-            return this._slugify(filename);
-        },
-
-        /**
-         * Keep field and state identical, dropping characters a URL can't carry.
-         * Accented letters are spelled out rather than deleted, so typing a name
-         * produces what the suggested one would have.
-         */
-        onShareSlugInput(event) {
-            const el = event?.target;
-            const cleaned = this._toSlugAlphabet(el ? el.value : this.shareSlug)
-                .replace(/\s+/g, '-')
-                .replace(/[^A-Za-z0-9_-]/g, '')
-                .slice(0, CONFIG.SHARE_SLUG_MAX_LENGTH);
-            this.shareSlug = cleaned;
-            // Alpine repaints only when the bound value changes, and a rejected
-            // keystroke leaves it unchanged, so put the field back by hand.
-            if (el && el.value !== cleaned) el.value = cleaned;
-            this._scheduleShareSlugCheck();
-        },
-
-        onShareRandomLinkToggle() {
-            if (this.shareUseRandomLink) {
-                this.shareSlugState = '';
-                return;
-            }
-            if (!this.shareSlug) this.shareSlug = this._suggestShareSlug();
-            this._scheduleShareSlugCheck();
-        },
-
-        _scheduleShareSlugCheck() {
-            clearTimeout(this._shareSlugCheckTid);
-            const slug = this.shareSlug;
-            if (!slug) {
-                this.shareSlugState = '';
-                return;
-            }
-            if (slug.length < CONFIG.SHARE_SLUG_MIN_LENGTH) {
-                this.shareSlugState = 'too_short';
-                return;
-            }
-            this.shareSlugState = '';
-            this._shareSlugCheckTid = setTimeout(
-                () => this._checkShareSlug(slug),
-                CONFIG.SHARE_SLUG_CHECK_DEBOUNCE
-            );
-        },
-
-        /**
-         * Ask whether a name is free. Advisory only - saving re-checks server-side,
-         * so a failed check leaves the field neutral instead of blocking the button.
-         */
-        async _checkShareSlug(slug) {
-            try {
-                const params = new URLSearchParams({ slug });
-                if (this.currentNote) {
-                    params.set('note_path', this.currentNote.replace(/\.md$/, ''));
-                }
-                const response = await fetch(`/api/share-slug?${params.toString()}`);
-                if (!response.ok) return;
-                const data = await response.json();
-                if (slug !== this.shareSlug) return;   // A later keystroke owns the field
-                this.shareSlugState = data.available ? 'ok' : (data.reason || 'taken');
-            } catch (error) {
-                console.warn('Could not check share link name:', error);
-            }
-        },
-
-        /** Full URL for what is currently typed, built the way the server builds it. */
-        shareSlugPreviewUrl() {
-            if (!this.shareSlug) return '';
-            const origin = this.sharePublicOrigin || window.location.origin;
-            return `${origin}/share/${this.shareSlug}`;
-        },
-
-        _shareSlugMessageFor(state) {
-            if (!state) return '';
-            if (state === 'ok') return this.t('share.slug_available');
-            if (state === 'taken') return this.t('share.slug_taken');
-            if (state === 'too_short') {
-                return this.t('share.slug_too_short', { min: CONFIG.SHARE_SLUG_MIN_LENGTH });
-            }
-            if (state === 'too_long') {
-                return this.t('share.slug_too_long', { max: CONFIG.SHARE_SLUG_MAX_LENGTH });
-            }
-            return this.t('share.slug_invalid_chars');
-        },
-
-        shareSlugMessage() {
-            return this._shareSlugMessageFor(this.shareSlugState);
-        },
-
-        shareSlugOk() {
-            return this.shareSlugState === 'ok';
-        },
-
-        /** A generated link is always fine; a typed one has to pass validation. */
-        canSubmitShareLink() {
-            if (this.shareUseRandomLink && !this.shareInfo?.shared) return true;
-            return this.shareSlug.length >= CONFIG.SHARE_SLUG_MIN_LENGTH
-                && !['taken', 'too_short', 'too_long', 'invalid_chars'].includes(this.shareSlugState);
-        },
-
-        /** True when the field holds a name the note is not actually shared under. */
-        shareSlugChanged() {
-            return !!this.shareInfo?.shared && this.shareSlug !== (this.shareInfo.token || '');
-        },
-
-        _shareSlugReason(detail) {
-            return detail && typeof detail === 'object' && typeof detail.reason === 'string'
-                ? detail.reason
-                : '';
-        },
-
-        _shareErrorText(detail) {
-            const reason = this._shareSlugReason(detail);
-            if (reason) return this._shareSlugMessageFor(reason);
-            return typeof detail === 'string' && detail ? detail : 'Unknown error';
-        },
-
-        // Open share modal and fetch current share status
-        async openShareModal() {
-            if (!this.currentNote) return;
-            
-            clearTimeout(this._shareResetTid);
-            // Reset state BEFORE showing modal to prevent flicker
-            this.showShareQR = false;
-            this.shareInfo = null;
-            this.shareLoading = true;
-            this.showShareModal = true;
-            this.shareUseRandomLink = true;
-            this.shareSlug = '';
-            this.shareSlugState = '';
-            
-            try {
-                const notePath = this.currentNote.replace('.md', '');
-                const encodedPath = notePath.split('/').map(segment => encodeURIComponent(segment)).join('/');
-                const response = await fetch(`/api/share/${encodedPath}`);
-                
-                if (response.ok) {
-                    this.shareInfo = this._localizeShareUrl(await response.json());
-                } else {
-                    this.shareInfo = { shared: false };
-                }
-            } catch (error) {
-                console.error('Failed to get share status:', error);
-                this.shareInfo = { shared: false };
-            } finally {
-                // An existing link's own name is what the field starts from, so editing
-                // it is a rename rather than a fresh choice.
-                this.shareSlug = this.shareInfo?.shared ? (this.shareInfo.token || '') : '';
-                this.shareLoading = false;
-            }
-        },
-        
-        // Create a share link for the current note (with current theme)
-        async createShareLink() {
-            if (!this.currentNote) return;
-            
-            this.shareLoading = true;
-            
-            try {
-                const notePath = this.currentNote.replace('.md', '');
-                const encodedPath = notePath.split('/').map(segment => encodeURIComponent(segment)).join('/');
-                const body = { theme: this.currentTheme || 'light' };
-                if (!this.shareUseRandomLink && this.shareSlug) body.slug = this.shareSlug;
-                const response = await fetch(`/api/share/${encodedPath}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(body)
-                });
-                
-                if (response.ok) {
-                    this.shareInfo = this._localizeShareUrl(await response.json());
-                    this.shareInfo.shared = true;
-                    this.shareSlug = this.shareInfo.token || '';
-                    this.shareSlugState = '';
-                    // Update the shared paths set
-                    this._sharedNotePaths.add(this.currentNote);
-                    this._syncSharedNotePathsList();
-                } else {
-                    const error = await response.json();
-                    // A rejected name belongs on the field, not only in a toast that
-                    // disappears while the dialog is still open.
-                    const reason = this._shareSlugReason(error.detail);
-                    if (reason) this.shareSlugState = reason;
-                    this.toast(this.t('share.error_creating', { error: this._shareErrorText(error.detail) }), { type: 'error' });
-                }
-            } catch (error) {
-                console.error('Failed to create share link:', error);
-                this.toast(this.t('share.error_creating', { error: error.message }), { type: 'error' });
-            } finally {
-                this.shareLoading = false;
-            }
-        },
-        
-        /**
-         * Move the note to a new link name.
-         *
-         * A note has one share token, so this is a swap: the previous URL stops
-         * resolving the moment the new one starts.
-         */
-        async updateShareLinkSlug() {
-            if (!this.currentNote || !this.shareSlugChanged() || !this.canSubmitShareLink()) return;
-            
-            const ok = await this.confirmModalAsk({
-                message: this.t('share.confirm_slug_change'),
-                danger: true,
-                confirmLabel: this.t('share.update_link'),
-            });
-            if (!ok) return;
-            
-            this.shareLoading = true;
-            
-            try {
-                const notePath = this.currentNote.replace('.md', '');
-                const encodedPath = notePath.split('/').map(segment => encodeURIComponent(segment)).join('/');
-                const response = await fetch(`/api/share/${encodedPath}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        theme: this.shareInfo?.theme || this.currentTheme || 'light',
-                        slug: this.shareSlug
-                    })
-                });
-                
-                if (response.ok) {
-                    this.shareInfo = this._localizeShareUrl(await response.json());
-                    this.shareInfo.shared = true;
-                    this.shareSlug = this.shareInfo.token || '';
-                    this.shareSlugState = '';
-                    this.shareLinkCopied = false;
-                } else {
-                    const error = await response.json();
-                    const reason = this._shareSlugReason(error.detail);
-                    if (reason) this.shareSlugState = reason;
-                    this.toast(this.t('share.error_updating', { error: this._shareErrorText(error.detail) }), { type: 'error' });
-                }
-            } catch (error) {
-                console.error('Failed to update share link:', error);
-                this.toast(this.t('share.error_updating', { error: error.message }), { type: 'error' });
-            } finally {
-                this.shareLoading = false;
-            }
-        },
-        
-        // Copy share link to clipboard
-        async copyShareLink() {
-            if (!this.shareInfo?.url) return;
-            
-            try {
-                await navigator.clipboard.writeText(this.shareInfo.url);
-            } catch (error) {
-                // Fallback for older browsers
-                const textArea = document.createElement('textarea');
-                textArea.value = this.shareInfo.url;
-                document.body.appendChild(textArea);
-                textArea.select();
-                document.execCommand('copy');
-                document.body.removeChild(textArea);
-            }
-            
-            this.shareLinkCopied = true;
-            setTimeout(() => {
-                this.shareLinkCopied = false;
-            }, 2000);
-        },
-        
-        // Revoke share link
-        async revokeShareLink() {
-            if (!this.currentNote) return;
-            
-            const ok = await this.confirmModalAsk({
-                message: this.t('share.confirm_revoke'),
-                danger: false,
-                confirmLabel: this.t('common.yes'),
-            });
-            if (!ok) return;
-            
-            this.shareLoading = true;
-            
-            try {
-                const notePath = this.currentNote.replace('.md', '');
-                const encodedPath = notePath.split('/').map(segment => encodeURIComponent(segment)).join('/');
-                const response = await fetch(`/api/share/${encodedPath}`, {
-                    method: 'DELETE'
-                });
-                
-                if (response.ok) {
-                    // Update the shared paths set
-                    this._sharedNotePaths.delete(this.currentNote);
-                    this._syncSharedNotePathsList();
-                    // Nothing is left to do here, and dropping back to the "create a
-                    // link" step offers to undo what was just confirmed.
-                    this.closeShareModal();
-                } else {
-                    const error = await response.json();
-                    this.toast(this.t('share.error_revoking', { error: error.detail || 'Unknown error' }), { type: 'error' });
-                }
-            } catch (error) {
-                console.error('Failed to revoke share link:', error);
-                this.toast(this.t('share.error_revoking', { error: error.message }), { type: 'error' });
-            } finally {
-                this.shareLoading = false;
-            }
         },
         
         // Toggle Zen Mode (full immersive writing experience)

@@ -242,6 +242,38 @@ func (h *SystemHandler) ExportNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Resolve wikilinks/media against the whole vault, same as the graph does.
+	notes, _, err := h.vault.ScanNotes(true)
+	if err != nil {
+		RespondError(w, http.StatusInternalServerError, "Failed to scan notes")
+		return
+	}
+	var notePaths []string
+	media := make(map[string]string)
+	for _, n := range notes {
+		if n.Type == "note" {
+			notePaths = append(notePaths, n.Path)
+			continue
+		}
+		// Lowercase filename -> vault path, first match wins (mirrors the
+		// frontend's media lookup).
+		filename := n.Path
+		if i := strings.LastIndex(filename, "/"); i >= 0 {
+			filename = filename[i+1:]
+		}
+		filename = strings.ToLower(filename)
+		if _, exists := media[filename]; !exists {
+			media[filename] = n.Path
+		}
+	}
+	resolver := vault.NewLinkResolver(notePaths)
+
+	rendered, err := exportNoteHTML(content, vault.NormalizedRelPath(notePath), resolver, media)
+	if err != nil {
+		RespondError(w, http.StatusInternalServerError, "Failed to render note")
+		return
+	}
+
 	themeID := r.URL.Query().Get("theme")
 	if themeID == "" {
 		themeID = h.cfg.UI.DefaultTheme
@@ -255,15 +287,16 @@ func (h *SystemHandler) ExportNote(w http.ResponseWriter, r *http.Request) {
 <html>
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>%s</title>
   <style>%s</style>
 </head>
 <body class="markdown-body">
-  <pre style="white-space: pre-wrap; font-family: inherit;">%s</pre>
+  <article>%s</article>
 </body>
 </html>`
 
-	body := fmt.Sprintf(htmlTemplate, htmlEscape(stem), css, htmlEscape(content))
+	body := fmt.Sprintf(htmlTemplate, htmlEscape(stem), css, rendered)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if isDownload {

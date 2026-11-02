@@ -76,7 +76,7 @@
     "drop_hint": "💡 Solte aqui para inserir na posição do cursor...",
     "mode_edit": "Editar",
     "mode_split": "Dividido",
-    "mode_preview": "Pré-visualização",
+    "mode_preview": "Visualização",
     "edited": "Editado {{time}}",
     "just_now": "agora mesmo",
     "minutes_ago": "há {{count}}min",
@@ -202,7 +202,7 @@
     "click_details": "▼ Clique para detalhes"
   },
   "graph": {
-    "title": "Visualização do Grafo",
+    "title": "Grafo",
     "empty": "Nenhuma conexão para exibir",
     "markdown_links": "Links markdown",
     "click_hint": "Clique: selecionar • Duplo clique: abrir"
