@@ -23,20 +23,20 @@ COPY . .
 # 1. Ajustado para detectar a arquitetura nativa se TARGETARCH estiver vazio
 RUN set -e; \
     ARCH="${TARGETARCH:-$(go env GOARCH)}"; \
-    if [ -f "bin/notediscovery-${ARCH}" ]; then \
+    if [ -f "bin/basalt-${ARCH}" ]; then \
         echo "Usando binario pre-compilado para ${ARCH}"; \
-        cp "bin/notediscovery-${ARCH}" /notediscovery; \
+        cp "bin/basalt-${ARCH}" /basalt; \
     else \
         echo "Compilando nativamente para ${TARGETOS}/${ARCH}"; \
         CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${ARCH} go build \
             -trimpath \
             -ldflags="-s -w" \
-            -o /notediscovery \
-            ./cmd/notediscovery; \
+            -o /basalt \
+            ./cmd/basalt; \
     fi; \
-    if ! head -c 4 /notediscovery | grep -q "ELF"; then \
-        echo "ERRO: /notediscovery nao e um executavel ELF."; \
-        echo "O pacote main nao foi compilado - verifique o caminho ./cmd/notediscovery no Dockerfile."; \
+    if ! head -c 4 /basalt | grep -q "ELF"; then \
+        echo "ERRO: /basalt nao e um executavel ELF."; \
+        echo "O pacote main nao foi compilado - verifique o caminho ./cmd/basalt no Dockerfile."; \
         exit 1; \
     fi; \
     echo "OK: binario ELF gerado para ${TARGETOS:-linux}/${ARCH}"
@@ -52,12 +52,12 @@ RUN apk add --no-cache ca-certificates tzdata && \
 
 WORKDIR /app
 
-COPY --from=builder /notediscovery /app/notediscovery
+COPY --from=builder /basalt /app/basalt
 COPY --from=builder /src/config.yaml /app/config.yaml
 COPY --from=builder /src/VERSION /app/VERSION
 
 # 2. Adicionado 'chmod +x' e garantida a permissão completa do appuser
-RUN chmod +x /app/notediscovery && \
+RUN chmod +x /app/basalt && \
     mkdir -p /app/data && \
     chown -R appuser:appgroup /app
 
@@ -70,4 +70,4 @@ ENV PORT=8000 \
 
 VOLUME ["/app/data"]
 
-ENTRYPOINT ["/app/notediscovery"]
+ENTRYPOINT ["/app/basalt"]
