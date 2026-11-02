@@ -1,0 +1,5 @@
+/* Source for the pre-compiled Tailwind build. The Play CDN generated the
+ * same three layers (base/preflight + utilities) at runtime. */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;

@@ -3,7 +3,7 @@
 app:
   # Name shown in the UI, the login page and the browser title.
   # Override via the APP_NAME env var.
-  name: "NoteDiscovery"
+  name: "Basalt"
   
 server:
   host: "0.0.0.0"
@@ -31,7 +31,7 @@ ui:
   # Override via the DEFAULT_THEME env var. Invalid values fall back to 'light'.
   default_theme: "light"
 
-  # Autosave debounce in milliseconds (applies to note typing and drawing autosave).
+  # Autosave debounce in milliseconds (applies to note typing).
   # Lower = saves more often (more disk writes); higher = saves less often.
   # Override via the AUTOSAVE_DELAY_MS env var. Server clamps to 250-60000ms.
   autosave_delay_ms: 1000

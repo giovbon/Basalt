@@ -1,27 +1,28 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
   <defs>
-    <linearGradient id="logoGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#667eea;stop-opacity:1" />
-      <stop offset="100%" style="stop-color:#764ba2;stop-opacity:1" />
+    <linearGradient id="bBody" x1="50%" y1="0%" x2="50%" y2="100%">
+      <stop offset="0%" stop-color="#a78bfa"/>
+      <stop offset="55%" stop-color="#8b5cf6"/>
+      <stop offset="100%" stop-color="#6d28d9"/>
+    </linearGradient>
+    <linearGradient id="bCap" x1="50%" y1="0%" x2="50%" y2="100%">
+      <stop offset="0%" stop-color="#7c3aed"/>
+      <stop offset="100%" stop-color="#5b21b6"/>
     </linearGradient>
   </defs>
-  
-  <!-- Main document shape -->
-  <rect x="40" y="30" width="120" height="140" rx="8" fill="url(#logoGradient)"/>
-  
-  <!-- Paper fold effect at top right -->
-  <path d="M 140 30 L 140 50 L 160 50 Z" fill="#5568d3"/>
-  
-  <!-- Lines representing text on the document -->
-  <line x1="60" y1="70" x2="140" y2="70" stroke="white" stroke-width="4" stroke-linecap="round" opacity="0.9"/>
-  <line x1="60" y1="90" x2="140" y2="90" stroke="white" stroke-width="4" stroke-linecap="round" opacity="0.9"/>
-  <line x1="60" y1="110" x2="120" y2="110" stroke="white" stroke-width="4" stroke-linecap="round" opacity="0.9"/>
-  
-  <!-- Discovery symbol - a magnifying glass -->
-  <g transform="translate(100, 135)">
-    <circle cx="0" cy="0" r="18" fill="none" stroke="white" stroke-width="4"/>
-    <line x1="13" y1="13" x2="25" y2="25" stroke="white" stroke-width="4" stroke-linecap="round"/>
-    <circle cx="0" cy="0" r="10" fill="white" opacity="0.3"/>
-  </g>
-</svg>
 
+  <!-- Crystal body: vertical hexagon (basalt column cross-section) -->
+  <path d="M100 14 L174 58 L174 142 L100 186 L26 142 L26 58 Z" fill="url(#bBody)"/>
+
+  <!-- Faceted top cap -->
+  <path d="M100 14 L174 58 L100 96 L26 58 Z" fill="url(#bCap)"/>
+
+  <!-- Left shading half for depth -->
+  <path d="M100 96 L26 58 L26 142 L100 186 Z" fill="#000000" opacity="0.14"/>
+
+  <!-- Specular highlight on upper-left facet -->
+  <path d="M100 14 L26 58 L100 96 Z" fill="#ffffff" opacity="0.10"/>
+
+  <!-- Central ridge -->
+  <line x1="100" y1="96" x2="100" y2="186" stroke="#ffffff" stroke-width="2" opacity="0.22"/>
+</svg>

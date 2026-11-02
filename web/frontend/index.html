@@ -21,12 +21,14 @@
     <meta name="apple-mobile-web-app-title" content="__APP_NAME__">
     <meta name="mobile-web-app-capable" content="yes">
     <!-- Theme color: initial value, updated dynamically by app.js when theme changes -->
-    <meta name="theme-color" content="#667eea">
-    <meta name="msapplication-TileColor" content="#667eea">
+    <meta name="theme-color" content="#7c3aed">
+    <meta name="msapplication-TileColor" content="#7c3aed">
     <meta name="msapplication-tap-highlight" content="no">
     
-    <!-- Libraries in /static/vendor/ are downloaded by scripts/vendor_assets.py -->
-    <script src="/static/vendor/tailwindcss/tailwind.min.js"></script>
+    <!-- Tailwind is pre-compiled into /static/tailwind.css (build-tailwind.sh)
+         instead of the old 408 KB Play CDN script that compiled styles in the
+         browser at runtime. The stylesheet <link> itself sits at the end of
+         <head>, matching the cascade position the CDN's runtime <style> had. -->
     
     <!-- Preload translations before Alpine initializes -->
     <script>
@@ -108,8 +110,9 @@
             }
         };
     </script>
-    <!-- Fonts and TeX extensions load relative to this script's path -->
-    <script src="/static/vendor/mathjax/tex-mml-chtml.js"></script>
+    <!-- MathJax (~1 MB) is NOT loaded here: typesetMath() fetches it on the
+         first note that actually contains math. The loader must use this same
+         URL so fonts and TeX extensions resolve relative to the script path. -->
     
     <!-- Theme set by app.js to match the active app theme -->
     <link rel="stylesheet" id="highlight-theme" href="">
@@ -127,8 +130,9 @@
     <script src="/static/vendor/highlight.js/languages/css.min.js"></script>
     <script src="/static/vendor/highlight.js/languages/http.min.js"></script>
     
-    <!-- Mermaid is not loaded here: renderMermaid() imports it on first diagram -->
-    <script src="/static/vendor/vis-network/vis-network.min.js"></script>
+    <!-- Mermaid and vis-network are not loaded here: renderMermaid() imports
+         Mermaid on first diagram and initGraph() loads vis-network when the
+         graph overlay opens for the first time. -->
     
     <!-- Theme styles will be loaded dynamically -->
     <link rel="stylesheet" id="theme-stylesheet" href="">
@@ -910,17 +914,23 @@
                 gap: 0.25rem;
             }
             
-            /* Smaller buttons on mobile */
-            .mobile-toolbar button {
-                padding: 0.5rem;
-                font-size: 0.875rem;
+            /* Touch-friendly but compact toolbar controls */
+            .mobile-toolbar .tb-btn {
+                padding: 10px;
             }
-            
-            /* Smaller text input on mobile */
-            .mobile-toolbar input {
-                min-width: 100px !important;
-                max-width: 200px !important;
-                font-size: 1rem !important;
+            .mobile-toolbar .tb-btn svg {
+                width: 20px;
+                height: 20px;
+            }
+            .mobile-toolbar .seg-btn {
+                padding: 6px 10px;
+            }
+
+            /* Compact note title on mobile (1rem keeps iOS from zooming the field on focus) */
+            .mobile-toolbar .tb-title {
+                min-width: 100px;
+                max-width: 200px;
+                font-size: 1rem;
             }
             
             /* Hide split view on mobile (not enough space) */
@@ -1011,7 +1021,90 @@
             opacity: 1;
             pointer-events: auto;
         }
+
+        /* ---- Basalt flat toolbar ---- */
+        .tb-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 6px;
+            border-radius: 6px;
+            color: var(--text-secondary);
+            transition: background-color 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+        }
+        .tb-btn:hover {
+            background-color: var(--bg-hover);
+            color: var(--text-primary);
+        }
+        .tb-btn:disabled {
+            opacity: 0.35;
+            cursor: not-allowed;
+            background-color: transparent;
+        }
+        .tb-btn svg {
+            width: 18px;
+            height: 18px;
+        }
+        .tb-sep {
+            width: 1px;
+            height: 16px;
+            background-color: var(--border-primary);
+            flex-shrink: 0;
+        }
+
+        /* Note title: borderless field instead of a boxed input */
+        .tb-title {
+            background-color: transparent;
+            border: 1px solid transparent;
+            border-radius: 6px;
+            padding: 4px 8px;
+            font-size: 0.9375rem;
+            font-weight: 500;
+            color: var(--text-primary);
+            transition: background-color 0.15s, border-color 0.15s, box-shadow 0.15s;
+            min-width: 150px;
+            max-width: 300px;
+            outline: none;
+        }
+        .tb-title:hover {
+            background-color: var(--bg-hover);
+        }
+        .tb-title:focus {
+            background-color: var(--bg-primary);
+            border-color: var(--accent-primary);
+            box-shadow: 0 0 0 3px var(--accent-light);
+        }
+        .tb-title[readonly] {
+            cursor: default;
+            color: var(--text-tertiary);
+        }
+        .tb-title[readonly]:hover {
+            background-color: transparent;
+        }
+
+        /* Segmented edit/split/preview switch */
+        .seg-btn {
+            padding: 4px 10px;
+            border-radius: 5px;
+            color: var(--text-secondary);
+            transition: background-color 0.15s, color 0.15s;
+        }
+        .seg-btn:hover {
+            background-color: var(--bg-hover);
+            color: var(--text-primary);
+        }
+        .seg-btn.active,
+        .seg-btn.active:hover {
+            background-color: var(--accent-primary);
+            color: #fff;
+        }
     </style>
+
+    <!-- Pre-compiled Tailwind utilities. Keep this as the LAST stylesheet in
+         <head>: the Play CDN used to append its <style> at runtime, so
+         utilities won over the inline styles above; a <link> here reproduces
+         that exact cascade. ?v= busts the immutable asset cache on release. -->
+    <link rel="stylesheet" href="/static/tailwind.css?v=__APP_VERSION__">
 </head>
 <body x-data="noteApp()" x-init="init()" style="background-color: var(--bg-primary);" :class="{'zen-mode-active': zenMode}">
 
@@ -1893,7 +1986,6 @@
                                         <option value="chooser"  x-text="t('settings.new_button_option_chooser')"></option>
                                         <option value="note"     x-text="t('settings.new_button_option_note')"></option>
                                         <option value="folder"   x-text="t('settings.new_button_option_folder')"></option>
-                                        <option value="drawing"  x-text="t('settings.new_button_option_drawing')"></option>
                                     </select>
                                     <p class="text-xs mt-1" style="color: var(--text-tertiary);" x-text="t('settings.new_button_action_desc')"></p>
                                 </div>
@@ -1932,65 +2024,6 @@
                                 </div>
                             </div>
                             
-                            <!-- Footer Info (inside scroll area) -->
-                            <div class="p-3 mt-4 border-t text-center" style="border-color: var(--border-primary);">
-                                <div class="text-xs" style="color: var(--text-tertiary);">
-                    <span x-text="notes.length"></span> <span x-text="notes.length === 1 ? t('homepage.note_singular') : t('homepage.note_plural')"></span>
-                    <span class="mx-1">·</span>
-                    <span x-text="'v' + appVersion"></span>
-                                </div>
-                    <a 
-                        href="https://www.notediscovery.com" 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                                    class="text-xs hover:underline"
-                        style="color: var(--accent-primary);"
-                    >
-                                    notediscovery.com
-                    </a>
-                    <!-- Ko-fi support link (hidden if ALREADY_DONATED=true) -->
-                    <template x-if="!alreadyDonated">
-                        <div class="mt-3 flex flex-col gap-2 items-center">
-                            <a 
-                                href="https://ko-fi.com/gamosoft" 
-                                target="_blank" 
-                                rel="noopener noreferrer"
-                                class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full transition-all hover:scale-105"
-                                style="background-color: #ff5e5b; color: white;"
-                            >
-                                <span>☕</span>
-                                <span x-text="t('support.enjoying_demo')"></span>
-                            </a>
-                            <!-- PikaPods deploy button -->
-                            <a 
-                                href="https://www.pikapods.com/pods?run=notediscovery" 
-                                target="_blank" 
-                                rel="noopener noreferrer"
-                                class="inline-flex items-center transition-all hover:scale-105"
-                            >
-                                <!-- Served locally so opening Settings makes no third-party request -->
-                                <img src="/static/pikapods-run-button.svg" alt="Run on PikaPods" style="height: 28px;">
-                            </a>
-                            <!-- Link to hide these buttons -->
-                            <a 
-                                href="https://github.com/gamosoft/NoteDiscovery/blob/main/documentation/ENVIRONMENT_VARIABLES.md#support" 
-                                target="_blank" 
-                                rel="noopener noreferrer"
-                                class="text-[10px] opacity-50 hover:opacity-100 transition-opacity"
-                                style="color: var(--text-tertiary);"
-                            >
-                                hide these buttons
-                            </a>
-                        </div>
-                    </template>
-                    <!-- Thank you message (shown when ALREADY_DONATED=true) -->
-                    <template x-if="alreadyDonated">
-                        <div class="mt-3 text-[10px] opacity-50 hover:opacity-100 transition-opacity text-center" style="color: var(--text-tertiary);">
-                            <span x-text="t('support.thank_you')"></span>
-                        </div>
-                    </template>
-                </div>
-            </div>
                     </div>
                 </template>
                 <!-- END SETTINGS PANEL -->
@@ -2284,7 +2317,7 @@
                                                 style="position: absolute; top: 8px; right: 8px; opacity: 0; transition: opacity 0.2s; color: var(--error); padding: 4px; border-radius: 4px; background-color: var(--bg-secondary);"
                                                 onmouseover="this.style.backgroundColor='var(--bg-hover)'"
                                                 onmouseout="this.style.backgroundColor='var(--bg-secondary)'"
-                                                :title="note.type === 'note' ? t('toolbar.delete_note') : (note.type === 'drawing' ? t('toolbar.delete_drawing') : t('toolbar.delete_image'))"
+                                                :title="note.type === 'note' ? t('toolbar.delete_note') : t('toolbar.delete_image')"
                                             >
                                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
@@ -2347,7 +2380,7 @@
                                             <button
                                                 @click.stop="note.type !== 'note' ? deleteMedia(note.path) : deleteNote(note.path, note.name)"
                                                 class="homepage-list-delete hidden sm:block"
-                                                :title="note.type === 'note' ? t('toolbar.delete_note') : (note.type === 'drawing' ? t('toolbar.delete_drawing') : t('toolbar.delete_image'))"
+                                                :title="note.type === 'note' ? t('toolbar.delete_note') : t('toolbar.delete_image')"
                                             >
                                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
@@ -2373,18 +2406,16 @@
                 <!-- Editor Area -->
                 <div class="flex-1 flex flex-col overflow-hidden" :class="{'zen-editor-container': zenMode}" style="background-color: var(--bg-primary);">
                     <!-- Toolbar -->
-                    <div class="px-4 py-3 flex items-center justify-between mobile-toolbar zen-hide" style="background-color: var(--bg-secondary); border-bottom: 1px solid var(--border-primary);">
-                        <div class="flex items-center space-x-2">
+                    <div class="px-3 py-2 flex items-center justify-between mobile-toolbar zen-hide" style="background-color: var(--bg-secondary); border-bottom: 1px solid var(--border-primary);">
+                        <div class="flex items-center space-x-1.5">
                             <!-- Mobile Menu Button -->
                             <button 
                                 @click="mobileSidebarOpen = !mobileSidebarOpen"
-                                class="mobile-menu-button p-2 rounded-lg"
-                                style="color: var(--text-primary); display: none;"
-                                onmouseover="this.style.backgroundColor='var(--bg-hover)'"
-                                onmouseout="this.style.backgroundColor='transparent'"
+                                class="mobile-menu-button tb-btn"
+                                style="display: none;"
                                 :title="t('sidebar.toggle_sidebar')"
                             >
-                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
                                 </svg>
                             </button>
@@ -2394,35 +2425,28 @@
                                 @input="if (currentNote) currentNoteName = $event.target.value"
                                 @blur="if (currentNote) renameNote()"
                                 :readonly="!currentNote"
-                                class="text-xl font-semibold border-none focus:outline-none focus:ring-2 rounded px-3 py-1.5"
-                                :style="'background-color: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-primary); min-width: 150px; max-width: 300px;' + (!currentNote ? ' cursor: default; opacity: 0.9;' : '')"
+                                class="tb-title"
                             >
-                            <!-- Undo Button (note history or drawing strokes when viewing a drawing) -->
+                            <!-- Undo Button -->
                             <button 
-                                @click="currentMediaType === 'drawing' ? drawingUndo() : undo()"
-                                :disabled="currentMediaType === 'drawing' ? drawingOps.length === 0 : undoHistory.length <= 1"
-                                class="p-2 rounded-lg"
-                                :style="(currentMediaType === 'drawing' ? drawingOps.length === 0 : undoHistory.length <= 1) ? 'color: var(--text-tertiary); opacity: 0.4; cursor: not-allowed;' : 'color: var(--text-secondary);'"
-                                onmouseover="if(!this.disabled) this.style.backgroundColor='var(--bg-hover)'"
-                                onmouseout="this.style.backgroundColor='transparent'"
+                                @click="undo()"
+                                :disabled="undoHistory.length <= 1"
+                                class="tb-btn"
                                 :title="t('toolbar.undo')"
                             >
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"></path>
                                 </svg>
                             </button>
                             
                             <!-- Redo Button -->
                             <button 
-                                @click="currentMediaType === 'drawing' ? drawingRedo() : redo()"
-                                :disabled="currentMediaType === 'drawing' ? drawingRedoStack.length === 0 : redoHistory.length === 0"
-                                class="p-2 rounded-lg"
-                                :style="(currentMediaType === 'drawing' ? drawingRedoStack.length === 0 : redoHistory.length === 0) ? 'color: var(--text-tertiary); opacity: 0.4; cursor: not-allowed;' : 'color: var(--text-secondary);'"
-                                onmouseover="if(!this.disabled) this.style.backgroundColor='var(--bg-hover)'"
-                                onmouseout="this.style.backgroundColor='transparent'"
+                                @click="redo()"
+                                :disabled="redoHistory.length === 0"
+                                class="tb-btn"
                                 :title="t('toolbar.redo')"
                             >
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 10h-10a8 8 0 00-8 8v2m18-10l-6 6m6-6l-6-6"></path>
                                 </svg>
                             </button>
@@ -2430,13 +2454,11 @@
                             <!-- Delete Button -->
                             <button 
                                 @click="currentMedia ? deleteMedia(currentMedia) : deleteCurrentNote()"
-                                class="p-2 rounded-lg"
+                                class="tb-btn"
                                 style="color: var(--error);"
-                                onmouseover="this.style.backgroundColor='var(--bg-hover)'"
-                                onmouseout="this.style.backgroundColor='transparent'"
-                                :title="currentMedia ? (currentMediaType === 'drawing' ? t('toolbar.delete_drawing') : t('toolbar.delete_image')) : t('toolbar.delete_note')"
+                                :title="currentMedia ? t('toolbar.delete_image') : t('toolbar.delete_note')"
                             >
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
                                 </svg>
                             </button>
@@ -2455,31 +2477,25 @@
                         
                         <div class="flex items-center space-x-2" x-show="currentNote">
                             <!-- View Toggle (only for notes) -->
-                            <div class="flex rounded-lg p-1" style="background-color: var(--bg-tertiary);">
+                            <div class="flex rounded-md p-0.5" style="background-color: var(--bg-tertiary);">
                                 <button 
                                     @click="viewMode = 'edit'"
-                                    class="px-2 md:px-3 py-1 text-xs md:text-sm rounded transition"
-                                    :style="viewMode === 'edit' ? 'background-color: var(--accent-primary); color: white;' : 'color: var(--text-secondary);'"
-                                    @mouseenter="if (viewMode !== 'edit') $el.style.backgroundColor = 'var(--bg-secondary)'"
-                                    @mouseleave="if (viewMode !== 'edit') $el.style.backgroundColor = 'transparent'"
+                                    class="seg-btn text-xs md:text-sm"
+                                    :class="{'active': viewMode === 'edit'}"
                                     x-text="t('editor.mode_edit')"
                                 >
                                 </button>
                                 <button 
                                     @click="viewMode = 'split'"
-                                    class="mobile-hide-split px-2 md:px-3 py-1 text-xs md:text-sm rounded transition"
-                                    :style="viewMode === 'split' ? 'background-color: var(--accent-primary); color: white;' : 'color: var(--text-secondary);'"
-                                    @mouseenter="if (viewMode !== 'split') $el.style.backgroundColor = 'var(--bg-secondary)'"
-                                    @mouseleave="if (viewMode !== 'split') $el.style.backgroundColor = 'transparent'"
+                                    class="seg-btn mobile-hide-split text-xs md:text-sm"
+                                    :class="{'active': viewMode === 'split'}"
                                     x-text="t('editor.mode_split')"
                                 >
                                 </button>
                                 <button 
                                     @click="viewMode = 'preview'"
-                                    class="px-2 md:px-3 py-1 text-xs md:text-sm rounded transition"
-                                    :style="viewMode === 'preview' ? 'background-color: var(--accent-primary); color: white;' : 'color: var(--text-secondary);'"
-                                    @mouseenter="if (viewMode !== 'preview') $el.style.backgroundColor = 'var(--bg-secondary)'"
-                                    @mouseleave="if (viewMode !== 'preview') $el.style.backgroundColor = 'transparent'"
+                                    class="seg-btn text-xs md:text-sm"
+                                    :class="{'active': viewMode === 'preview'}"
                                     x-text="t('editor.mode_preview')"
                                 >
                                 </button>
@@ -2488,232 +2504,73 @@
                             <!-- Note Actions Toolbar -->
                             <div 
                                 x-show="currentNote"
-                                class="flex items-center rounded overflow-hidden"
-                                style="background-color: var(--bg-tertiary); border: 1px solid var(--border-primary);"
+                                class="flex items-center"
                             >
                                 <button 
                                     @click="toggleFavorite()"
-                                    class="p-2 transition"
+                                    class="tb-btn transition"
                                     :title="isFavorite(currentNote) ? t('toolbar.remove_favorite') : t('toolbar.add_favorite')"
                                     :style="'color: ' + (isFavorite(currentNote) ? 'var(--warning, #eab308)' : 'var(--text-secondary)') + ';'"
-                                    @mouseenter="$el.style.backgroundColor = 'var(--bg-secondary)'"
-                                    @mouseleave="$el.style.backgroundColor = 'transparent'"
                                 >
                                     <!-- Filled star (favorited) -->
-                                    <svg x-show="isFavorite(currentNote)" class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                                    <svg x-show="isFavorite(currentNote)" fill="currentColor" viewBox="0 0 24 24">
                                         <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"></path>
                                     </svg>
                                     <!-- Empty star (not favorited) -->
-                                    <svg x-show="!isFavorite(currentNote)" x-cloak class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <svg x-show="!isFavorite(currentNote)" x-cloak fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"></path>
                                     </svg>
                                 </button>
-                                <div style="width: 1px; height: 20px; background-color: var(--border-primary);"></div>
+                                <div class="tb-sep"></div>
                                 <button 
                                     @click="exportToHTML()"
-                                    class="p-2 transition"
+                                    class="tb-btn transition"
                                     style="color: var(--text-secondary);"
                                     :title="t('toolbar.export_html')"
-                                    @mouseenter="$el.style.backgroundColor = 'var(--bg-secondary)'"
-                                    @mouseleave="$el.style.backgroundColor = 'transparent'"
                                 >
-                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
                                     </svg>
                                 </button>
                                 <button 
                                     @click="printPreview()"
-                                    class="p-2 transition"
+                                    class="tb-btn transition"
                                     style="color: var(--text-secondary);"
                                     :title="t('toolbar.print_preview')"
-                                    @mouseenter="$el.style.backgroundColor = 'var(--bg-secondary)'"
-                                    @mouseleave="$el.style.backgroundColor = 'transparent'"
                                 >
-                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path>
                                     </svg>
                                 </button>
-                                <div style="width: 1px; height: 20px; background-color: var(--border-primary);"></div>
+                                <div class="tb-sep"></div>
                                 <button 
                                     @click="copyNoteLink()"
-                                    class="p-2 transition hover:bg-opacity-80"
+                                    class="tb-btn transition"
                                     :title="linkCopied ? t('common.copied') : t('toolbar.copy_link')"
                                     :style="'color: ' + (linkCopied ? 'var(--success, #22c55e)' : 'var(--text-secondary)') + ';'"
-                                    @mouseenter="$el.style.backgroundColor = 'var(--bg-secondary)'"
-                                    @mouseleave="$el.style.backgroundColor = 'transparent'"
                                 >
                                     <!-- Link icon (default) -->
-                                    <svg x-show="!linkCopied" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <svg x-show="!linkCopied" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"></path>
                                     </svg>
                                     <!-- Checkmark icon (after copy) -->
-                                    <svg x-show="linkCopied" x-cloak class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <svg x-show="linkCopied" x-cloak fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
                                     </svg>
                                 </button>
-                                <div style="width: 1px; height: 20px; background-color: var(--border-primary);"></div>
+                                <div class="tb-sep"></div>
                                 <button 
                                     @click="toggleZenMode()"
-                                    class="p-2 transition"
+                                    class="tb-btn transition"
                                     style="color: var(--text-secondary);"
                                     :title="t('zen_mode.tooltip')"
-                                    @mouseenter="$el.style.backgroundColor = 'var(--bg-secondary)'"
-                                    @mouseleave="$el.style.backgroundColor = 'transparent'"
                                 >
                                     <!-- Expand/Focus icon -->
-                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"></path>
                                     </svg>
                                 </button>
                             </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Drawing tools (below main toolbar; undo/redo use icons above) -->
-                    <div 
-                        x-show="currentMedia && currentMediaType === 'drawing'"
-                        class="px-4 py-2 flex flex-wrap gap-2 items-center border-b flex-shrink-0 zen-hide"
-                        style="background-color: var(--bg-secondary); border-color: var(--border-primary);"
-                        x-cloak
-                    >
-                        <button
-                            type="button"
-                            class="p-2 rounded-lg border transition-colors"
-                            :style="drawingTool === 'freehand' ? 'background-color: var(--accent-primary); color: white; border-color: var(--accent-primary);' : 'background-color: var(--bg-tertiary); color: var(--text-secondary); border-color: var(--border-primary);'"
-                            @click="drawingTool = 'freehand'"
-                            :title="t('drawing.tool_freehand')"
-                        >
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                            </svg>
-                        </button>
-                        <button
-                            type="button"
-                            class="p-2 rounded-lg border transition-colors"
-                            :style="drawingTool === 'line' ? 'background-color: var(--accent-primary); color: white; border-color: var(--accent-primary);' : 'background-color: var(--bg-tertiary); color: var(--text-secondary); border-color: var(--border-primary);'"
-                            @click="drawingTool = 'line'"
-                            :title="t('drawing.tool_line')"
-                        >
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 20L20 4" />
-                            </svg>
-                        </button>
-                        <button
-                            type="button"
-                            class="p-2 rounded-lg border transition-colors"
-                            :style="drawingTool === 'rect' ? 'background-color: var(--accent-primary); color: white; border-color: var(--accent-primary);' : 'background-color: var(--bg-tertiary); color: var(--text-secondary); border-color: var(--border-primary);'"
-                            @click="drawingTool = 'rect'"
-                            :title="t('drawing.tool_rect')"
-                        >
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5a2 2 0 012-2h12a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V5z" />
-                            </svg>
-                        </button>
-                        <button
-                            type="button"
-                            class="p-2 rounded-lg border transition-colors"
-                            :style="drawingTool === 'ellipse' ? 'background-color: var(--accent-primary); color: white; border-color: var(--accent-primary);' : 'background-color: var(--bg-tertiary); color: var(--text-secondary); border-color: var(--border-primary);'"
-                            @click="drawingTool = 'ellipse'"
-                            :title="t('drawing.tool_ellipse')"
-                        >
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                            </svg>
-                        </button>
-                        <button
-                            type="button"
-                            class="p-2 rounded-lg border transition-colors"
-                            :style="drawingTool === 'eraser' ? 'background-color: var(--accent-primary); color: white; border-color: var(--accent-primary);' : 'background-color: var(--bg-tertiary); color: var(--text-secondary); border-color: var(--border-primary);'"
-                            @click="drawingTool = 'eraser'"
-                            :title="t('drawing.tool_eraser')"
-                        >
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21M22 21H7M5 11l9 9" />
-                            </svg>
-                        </button>
-                        <button
-                            type="button"
-                            class="p-2 rounded-lg border transition-colors"
-                            :style="drawingTool === 'eyedropper' ? 'background-color: var(--accent-primary); color: white; border-color: var(--accent-primary);' : 'background-color: var(--bg-tertiary); color: var(--text-secondary); border-color: var(--border-primary);'"
-                            @click="drawingTool = 'eyedropper'"
-                            :title="t('drawing.tool_eyedropper')"
-                        >
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m15 11.25 1.425 1.425c.671.671.671 1.757 0 2.428l-1.06 1.06c-.671.671-1.757.671-2.428 0l-1.425-1.425m6-6 1.425-1.425c.671-.671 1.757-.671 2.428 0l1.06 1.06c.671.671.671 1.757 0 2.428L21 15.75m-6-6L8.25 3.75a2.121 2.121 0 0 0-3 3L12 15.75l3-3m-3-3-6 6" />
-                            </svg>
-                        </button>
-                        <button
-                            type="button"
-                            class="p-2 rounded-lg border transition-colors"
-                            :style="drawingTool === 'fill' ? 'background-color: var(--accent-primary); color: white; border-color: var(--accent-primary);' : 'background-color: var(--bg-tertiary); color: var(--text-secondary); border-color: var(--border-primary);'"
-                            @click="drawingTool = 'fill'"
-                            :title="t('drawing.tool_fill')"
-                        >
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3l9 9-7.5 7.5a2.121 2.121 0 01-3 0L3 16.5a2.121 2.121 0 010-3L9 3z" />
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 13.5h15" />
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.5 14.5c0 1-1.5 3-1.5 3s-1.5-2-1.5-3a1.5 1.5 0 113 0z" />
-                            </svg>
-                        </button>
-                        <button
-                            type="button"
-                            class="p-2 rounded-lg border transition-colors"
-                            :style="drawingTool === 'text' ? 'background-color: var(--accent-primary); color: white; border-color: var(--accent-primary);' : 'background-color: var(--bg-tertiary); color: var(--text-secondary); border-color: var(--border-primary);'"
-                            @click="drawingTool = 'text'"
-                            :title="t('drawing.tool_text')"
-                        >
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 4h14M12 4v16M8 20h8" />
-                            </svg>
-                        </button>
-                        <button
-                            type="button"
-                            class="p-2 rounded-lg border transition-colors"
-                            :class="!drawingClearEnabled() ? 'opacity-40 cursor-not-allowed' : ''"
-                            :style="!drawingClearEnabled()
-                                ? 'border-color: var(--border-primary); color: var(--text-secondary);'
-                                : 'border-color: var(--border-primary); color: var(--text-secondary); background-color: var(--bg-tertiary);'"
-                            :disabled="!drawingClearEnabled()"
-                            @click="drawingClear()"
-                            :title="t('drawing.clear_hint')"
-                        >
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                            </svg>
-                        </button>
-                        <label
-                            class="flex h-9 items-center gap-2 rounded-lg border px-2 shrink-0 cursor-pointer"
-                            style="border-color: var(--border-primary); background-color: var(--bg-tertiary);"
-                            :title="t('drawing.color')"
-                        >
-                            <span class="text-xs select-none" style="color: var(--text-secondary);" x-text="t('drawing.color')"></span>
-                            <input
-                                type="color"
-                                x-model="drawingColor"
-                                class="h-7 w-8 shrink-0 cursor-pointer rounded border p-0"
-                                style="border-color: var(--border-primary);"
-                                :aria-label="t('drawing.color')"
-                            />
-                        </label>
-                        <div
-                            class="flex h-9 min-w-0 shrink items-center gap-2 rounded-lg border px-2"
-                            style="border-color: var(--border-primary); background-color: var(--bg-tertiary);"
-                            :title="t('drawing.width')"
-                        >
-                            <span class="text-xs whitespace-nowrap select-none shrink-0" style="color: var(--text-secondary);" x-text="t('drawing.width')"></span>
-                            <input
-                                type="range"
-                                min="1"
-                                max="32"
-                                x-model.number="drawingLineWidth"
-                                class="w-24 md:w-36 align-middle min-w-0 flex-1"
-                                style="accent-color: var(--accent-primary);"
-                                :aria-label="t('drawing.width')"
-                                :aria-valuemin="1"
-                                :aria-valuemax="32"
-                                :aria-valuenow="drawingLineWidth"
-                            />
-                            <span class="text-xs tabular-nums shrink-0 w-5 text-right" style="color: var(--text-secondary);" x-text="drawingLineWidth"></span>
                         </div>
                     </div>
                     
@@ -2746,6 +2603,9 @@
                                 </button>
                                 <button @click="formatText('image')" class="format-btn" :title="t('format.image')">
                                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                                </button>
+                                <button @click="$refs.attachFileInput.click()" class="format-btn" :title="t('format.attach')">
+                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"></path></svg>
                                 </button>
                                 <div class="w-px h-4 mx-1" style="background-color: var(--border-primary);"></div>
                                 <button @click="formatText('code')" class="format-btn" :title="t('format.code')">
@@ -2801,6 +2661,15 @@
                                     :style="'background-color: var(--bg-primary); color: var(--text-primary);' + ((draggedItem || externalDragActive) && dropTarget === 'editor' ? ' outline: 2px dashed var(--accent-primary); outline-offset: -2px; box-shadow: 0 0 20px var(--accent-light);' : '')"
                                     :placeholder="(draggedItem || externalDragActive) && dropTarget === 'editor' ? t('editor.drop_hint') : t('editor.placeholder')"
                                 ></textarea>
+                                <!-- 📎 attach picker: uploads and embeds at the cursor (handleAttachFiles) -->
+                                <input
+                                    type="file"
+                                    x-ref="attachFileInput"
+                                    multiple
+                                    accept=".jpg,.jpeg,.png,.gif,.webp,.mp3,.wav,.ogg,.m4a,.mp4,.webm,.mov,.avi,.pdf"
+                                    style="display: none;"
+                                    @change="handleAttachFiles($event)"
+                                >
                             </div>
                         </div>
                         
@@ -2942,14 +2811,13 @@
                         <!-- Media Viewer (images, audio, video, PDF) -->
                         <template x-if="currentMedia">
                             <div 
-                                class="flex-1 flex overflow-auto min-h-0"
-                                :class="currentMediaType === 'drawing' ? 'items-stretch justify-stretch' : 'items-center justify-center'"
+                                class="flex-1 flex overflow-auto min-h-0 items-center justify-center"
                                 style="background-color: var(--bg-primary);"
                             >
                                 <!-- Image -->
                                 <template x-if="currentMediaType === 'image'">
                                     <img 
-                                        :src="`/api/media/${currentMedia}`" 
+                                        :src="`/api/media/${encodeVaultRelativePathForMediaApi(currentMedia)}`" 
                                         :alt="currentMedia.split('/').pop()"
                                         style="max-width: 100%; max-height: 100%; object-fit: contain; padding: 2rem;"
                                     />
@@ -2962,7 +2830,7 @@
                                         <div class="text-lg font-medium" style="color: var(--text-primary);" x-text="currentMedia.split('/').pop()"></div>
                                         <audio 
                                             controls 
-                                            :src="`/api/media/${currentMedia}`"
+                                            :src="`/api/media/${encodeVaultRelativePathForMediaApi(currentMedia)}`"
                                             style="width: 100%; max-width: 500px;"
                                         >
                                             Your browser does not support the audio element.
@@ -2974,7 +2842,7 @@
                                 <template x-if="currentMediaType === 'video'">
                                     <video 
                                         controls 
-                                        :src="`/api/media/${currentMedia}`"
+                                        :src="`/api/media/${encodeVaultRelativePathForMediaApi(currentMedia)}`"
                                         style="max-width: 100%; max-height: 100%; padding: 1rem;"
                                     >
                                         Your browser does not support the video element.
@@ -2984,81 +2852,12 @@
                                 <!-- PDF -->
                                 <template x-if="currentMediaType === 'document'">
                                     <iframe 
-                                        :src="`/api/media/${currentMedia}`"
+                                        :src="`/api/media/${encodeVaultRelativePathForMediaApi(currentMedia)}`"
                                         style="width: 100%; height: 100%; border: none;"
                                         :title="currentMedia.split('/').pop()"
                                     ></iframe>
                                 </template>
                                 
-                                <!-- Drawing (PNG named drawing-*.png); tools row is in header area above -->
-                                <template x-if="currentMediaType === 'drawing'">
-                                    <div 
-                                        class="flex flex-col flex-1 w-full min-w-0 min-h-0 self-stretch" 
-                                        :key="currentMedia"
-                                    >
-                                        <div 
-                                            x-ref="drawingCanvasWrap"
-                                            class="flex-1 w-full min-h-0 min-w-0 flex items-center justify-center relative"
-                                            style="min-height: 0; background-color: var(--bg-secondary);"
-                                        >
-                                            <canvas
-                                                x-ref="drawingCanvas"
-                                                class="drawing-surface block"
-                                                :style="drawingTool === 'eyedropper'
-                                                    ? 'touch-action: none; cursor: copy; background: #fff;'
-                                                    : drawingTool === 'fill'
-                                                        ? 'touch-action: none; cursor: cell; background: #fff;'
-                                                        : drawingTool === 'text'
-                                                            ? 'touch-action: none; cursor: text; background: #fff;'
-                                                            : 'touch-action: none; cursor: crosshair; background: #fff;'"
-                                                @pointerdown.prevent="drawingPointerDown($event)"
-                                                @pointermove.prevent="drawingPointerMove($event)"
-                                                @pointerup.prevent="drawingPointerUp($event)"
-                                                @pointercancel.prevent="drawingPointerUp($event)"
-                                            ></canvas>
-                                            <!-- Text-tool floating editor — only visible while placing text.
-                                                 The contenteditable's typed glyphs are kept INVISIBLE
-                                                 (color: transparent) on purpose: HTML and canvas text-rendering
-                                                 land glyphs on subtly different pixels even with identical font /
-                                                 size / line-height, so showing both would always result in a tiny
-                                                 jump on commit. Instead we render the typed text live on the
-                                                 canvas (via drawingDraft), so what the user sees while typing IS
-                                                 the canvas output — pixel-identical to the rasterized op on Enter.
-                                                 Only the caret (caret-color) and the dashed outline remain
-                                                 visible to indicate where the text will land. -->
-                                            <div
-                                                id="drawing-text-input"
-                                                x-show="drawingTextActive"
-                                                contenteditable="plaintext-only"
-                                                spellcheck="false"
-                                                @keydown.enter.prevent="drawingTextCommit()"
-                                                @keydown.escape.prevent="drawingTextCancel()"
-                                                @blur="drawingTextCommit()"
-                                                @input="drawingTextOnInput($event)"
-                                                :style="`position: absolute;
-                                                    left: ${drawingTextCssX}px;
-                                                    top: ${drawingTextCssY}px;
-                                                    font-size: ${Math.max(12, drawingTextDocFontSize * ((($refs.drawingCanvas && $refs.drawingCanvas.clientWidth) || drawingDocW) / drawingDocW))}px;
-                                                    line-height: 1;
-                                                    font-family: sans-serif;
-                                                    color: transparent;
-                                                    caret-color: ${drawingColor};
-                                                    background: transparent;
-                                                    border: 0;
-                                                    border-radius: 0;
-                                                    padding: 0;
-                                                    margin: 0;
-                                                    outline: 1px dashed ${drawingColor};
-                                                    outline-offset: -1px;
-                                                    box-shadow: none;
-                                                    z-index: 5;
-                                                    min-width: 4ch;
-                                                    white-space: pre;`"
-                                                x-cloak
-                                            ></div>
-                                        </div>
-                                    </div>
-                                </template>
                             </div>
                         </template>
                     </div>
@@ -3103,16 +2902,6 @@
             >
                 <span class="text-lg">📁</span>
                 <span x-text="t('sidebar.new_folder')"></span>
-            </button>
-            <button 
-                @click="createNewDrawing()"
-                class="w-full px-4 py-2.5 text-sm text-left flex items-center gap-3 transition-colors"
-                style="color: var(--text-primary);"
-                onmouseover="this.style.backgroundColor='var(--bg-hover)'"
-                onmouseout="this.style.backgroundColor='transparent'"
-            >
-                <span class="text-lg">✏️</span>
-                <span x-text="t('sidebar.new_drawing')"></span>
             </button>
         </div>
     </div>

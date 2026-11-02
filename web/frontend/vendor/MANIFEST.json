@@ -1,13 +1,6 @@
 {
   "generated_by": "scripts/vendor_assets.py",
   "packages": {
-    "tailwindcss": {
-      "version": "3.4.17",
-      "license": "MIT",
-      "hashes": {
-        "tailwind.min.js": "176e894661aa9cdc9a5cba6c720044cbbf7b8bd80d1c9a142a7c24b1b6c50d15"
-      }
-    },
     "alpinejs": {
       "version": "3.14.1",
       "license": "MIT",

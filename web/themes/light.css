@@ -17,10 +17,10 @@
   --border-primary: #e5e7eb;
   --border-secondary: #d1d5db;
   
-  /* Accent colors */
-  --accent-primary: #3b82f6;
-  --accent-hover: #2563eb;
-  --accent-light: #dbeafe;
+  /* Accent colors (Basalt violet) */
+  --accent-primary: #7c3aed;
+  --accent-hover: #6d28d9;
+  --accent-light: #ede9fe;
   
   /* Status colors */
   --success: #10b981;

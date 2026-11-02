@@ -627,10 +627,6 @@ var mediaExtensions = map[string][]string{
 }
 
 func GetMediaType(filename string) string {
-	nameLower := strings.ToLower(filepath.Base(filename))
-	if strings.HasPrefix(nameLower, "drawing-") && strings.HasSuffix(nameLower, ".png") {
-		return "drawing"
-	}
 	ext := strings.ToLower(filepath.Ext(filename))
 	for mediaType, exts := range mediaExtensions {
 		for _, e := range exts {
@@ -683,44 +679,11 @@ func (v *Vault) GetAttachmentDir(notePath string) string {
 	return filepath.Join(v.notesDir, dir, "_attachments")
 }
 
-func (v *Vault) SaveUploadedImage(notePath string, filename string, data []byte, siblingFolder *string) (string, error) {
+func (v *Vault) SaveUploadedImage(notePath string, filename string, data []byte) (string, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
 	timestamp := time.Now().Format("20060102150405")
-
-	if siblingFolder != nil {
-		cf := strings.TrimSpace(strings.ReplaceAll(*siblingFolder, "\\", "/"))
-		segments := []string{}
-		for _, s := range strings.Split(cf, "/") {
-			if s != "" && s != "." {
-				if s == ".." {
-					return "", fmt.Errorf("invalid path")
-				}
-				segments = append(segments, s)
-			}
-		}
-		destDir := v.notesDir
-		if len(segments) > 0 {
-			destDir = filepath.Join(v.notesDir, filepath.Join(segments...))
-		}
-		if !v.ValidatePathSecurity(destDir) {
-			return "", fmt.Errorf("security validation failed")
-		}
-		if err := os.MkdirAll(destDir, 0755); err != nil {
-			return "", err
-		}
-		fileName := fmt.Sprintf("drawing-%s.png", timestamp)
-		fullPath := filepath.Join(destDir, fileName)
-		if !v.ValidatePathSecurity(fullPath) {
-			return "", fmt.Errorf("security validation failed")
-		}
-		if err := os.WriteFile(fullPath, data, 0644); err != nil {
-			return "", err
-		}
-		rel, _ := filepath.Rel(v.notesDir, fullPath)
-		return strings.ReplaceAll(rel, "\\", "/"), nil
-	}
 
 	sanitized := SanitizeFilename(filename)
 	ext := filepath.Ext(sanitized)

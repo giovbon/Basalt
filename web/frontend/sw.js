@@ -11,6 +11,7 @@ const CACHE_NAME = 'notediscovery-__APP_VERSION__';
 const PRECACHE_ASSETS = [
   '/static/logo.svg',
   '/static/favicon.svg',
+  '/static/tailwind.css?v=__APP_VERSION__',
   '/static/app.js?v=__APP_VERSION__'
 ];
 

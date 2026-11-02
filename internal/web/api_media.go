@@ -1,7 +1,6 @@
 package web
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -51,56 +50,6 @@ func (h *MediaHandler) GetMedia(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, fullPath)
 }
 
-func (h *MediaHandler) PutMedia(w http.ResponseWriter, r *http.Request) {
-	mediaPath := r.PathValue("path")
-	fullPath := h.vault.FullPath(mediaPath)
-
-	if !h.vault.ValidatePathSecurity(fullPath) {
-		RespondError(w, http.StatusForbidden, "Access denied")
-		return
-	}
-
-	info, err := os.Stat(fullPath)
-	if err != nil || info.IsDir() {
-		RespondError(w, http.StatusNotFound, "File not found")
-		return
-	}
-
-	nameLower := strings.ToLower(filepath.Base(mediaPath))
-	if !strings.HasPrefix(nameLower, "drawing-") || !strings.HasSuffix(nameLower, ".png") {
-		RespondError(w, http.StatusBadRequest, "Only drawing PNG files (drawing-*.png) can be updated in place")
-		return
-	}
-
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		RespondError(w, http.StatusBadRequest, "Failed to read body")
-		return
-	}
-
-	// Validate PNG magic bytes: \x89PNG\r\n\x1a\n
-	pngMagic := []byte{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A}
-	if len(body) < 8 || !bytes.Equal(body[:8], pngMagic) {
-		RespondError(w, http.StatusBadRequest, "Body must be a valid PNG image")
-		return
-	}
-
-	if int64(len(body)) > h.cfg.UploadMaxImage {
-		RespondError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("Image exceeds maximum size of %dMB", h.cfg.UploadMaxImage/(1024*1024)))
-		return
-	}
-
-	if err := os.WriteFile(fullPath, body, 0644); err != nil {
-		RespondError(w, http.StatusInternalServerError, "Failed to update media file")
-		return
-	}
-
-	RespondJSON(w, http.StatusOK, map[string]any{
-		"success": true,
-		"path":    mediaPath,
-	})
-}
-
 var allowedMIMETypes = map[string]string{
 	// Images
 	"image/jpeg": "image",
@@ -144,8 +93,6 @@ func (h *MediaHandler) UploadMedia(w http.ResponseWriter, r *http.Request) {
 	defer file.Close()
 
 	notePath := r.FormValue("note_path")
-	contentFolder := r.FormValue("content_folder")
-	nextToNotes := r.FormValue("next_to_notes")
 
 	fileData, err := io.ReadAll(file)
 	if err != nil {
@@ -191,12 +138,7 @@ func (h *MediaHandler) UploadMedia(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var siblingFolder *string
-	if nextToNotes == "1" || nextToNotes == "true" {
-		siblingFolder = &contentFolder
-	}
-
-	savedPath, err := h.vault.SaveUploadedImage(notePath, header.Filename, fileData, siblingFolder)
+	savedPath, err := h.vault.SaveUploadedImage(notePath, header.Filename, fileData)
 	if err != nil || savedPath == "" {
 		RespondError(w, http.StatusInternalServerError, "Failed to save file")
 		return
@@ -209,7 +151,7 @@ func (h *MediaHandler) UploadMedia(w http.ResponseWriter, r *http.Request) {
 
 	var markdownLink string
 	cleanFilename := filepath.Base(savedPath)
-	if extType == "image" || extType == "drawing" {
+	if extType == "image" {
 		markdownLink = fmt.Sprintf("![%s](%s)", cleanFilename, savedPath)
 	} else {
 		markdownLink = fmt.Sprintf("[%s](%s)", cleanFilename, savedPath)

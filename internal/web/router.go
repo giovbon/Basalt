@@ -84,7 +84,6 @@ func NewServer(cfg *config.Config, v *vault.Vault, sess *session.Manager, assets
 	mux.HandleFunc("POST /api/upload-media", mediaH.UploadMedia)
 	mux.HandleFunc("POST /api/media/move", mediaH.MoveMedia)
 	mux.HandleFunc("GET /api/media/{path...}", mediaH.GetMedia)
-	mux.HandleFunc("PUT /api/media/{path...}", mediaH.PutMedia)
 
 	// Catch-all SPA
 	mux.HandleFunc("GET /{$}", staticH.ServeIndex)
@@ -129,7 +128,9 @@ func NewServer(cfg *config.Config, v *vault.Vault, sess *session.Manager, assets
 		vault:   v,
 		session: sess,
 		mux:     mux,
-		handler: corsHandler,
+		// Outermost layer: gzip everything the client accepts (shell, static
+		// assets and JSON API), decided per response by Content-Type.
+		handler: gzipHandler(corsHandler),
 	}
 }
 

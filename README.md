@@ -1,6 +1,6 @@
-# NoteDiscovery (Go) 🚀
+# Basalt (Go) 🌋
 
-Uma aplicação rápida, leve e autocontida para gerenciamento de notas em Markdown, suporte a tags, links bidirecionais (wikilinks), grafo visual, mídias (áudio, vídeo, PDFs, imagens), desenhos interativos e busca instantânea de texto completo.
+Uma aplicação rápida, leve e autocontida para gerenciamento de notas em Markdown, suporte a tags, links bidirecionais (wikilinks), grafo visual, mídias (áudio, vídeo, PDFs, imagens) e busca instantânea de texto completo.
 
 Esta versão possui o **backend totalmente reescrito em Go**, mantendo paridade com o frontend e oferecendo inicialização instantânea, baixo consumo de memória (~20MB) e distribuição em binário único sem dependências externas.
 
@@ -28,6 +28,17 @@ O script:
 Para rodar em outra porta:
 ```bash
 PORT=8080 ./run.sh
+```
+
+### Desenvolvimento: alterando a interface
+
+O CSS do Tailwind é pré-compilado em `web/frontend/tailwind.css` (substitui o
+antigo Play CDN de 408 KB que compilava estilos em runtime no navegador). Se
+você adicionar ou renomear classes Tailwind em `index.html`/`app.js`, regenere
+o CSS e commite junto com a mudança:
+
+```bash
+./build-tailwind.sh   # requer Node.js/npm
 ```
 
 ---
@@ -64,7 +75,7 @@ services:
     environment:
       - PORT=8000
       - NOTES_DIR=/app/data
-      - APP_NAME=NoteDiscovery
+      - APP_NAME=Basalt
       - DEFAULT_THEME=light
       # Autenticação (opcional):
       # - AUTHENTICATION_ENABLED=true
@@ -81,7 +92,7 @@ docker run -d \
   --name notediscovery \
   -p 8000:8000 \
   -v $(pwd)/data:/app/data \
-  -e APP_NAME="NoteDiscovery" \
+  -e APP_NAME="Basalt" \
   SEU_USUARIO_DOCKERHUB/notediscovery:latest
 ```
 
@@ -95,7 +106,7 @@ Todas as variáveis podem ser definidas no ambiente ou via `docker-compose.yml`:
 | :--- | :--- | :--- |
 | `PORT` | `8000` | Porta HTTP em que o servidor escutará. |
 | `NOTES_DIR` | `./data` | Diretório onde as notas e anexos são armazenados. |
-| `APP_NAME` | `NoteDiscovery` | Nome exibido na interface e no título da aba. |
+| `APP_NAME` | `Basalt` | Nome exibido na interface e no título da aba. |
 | `DEFAULT_THEME` | `light` | Tema inicial (`light`, `dark`, `dracula`, `nord`, etc.). |
 | `AUTOSAVE_DELAY_MS` | `1000` | Debounce de salvamento automático (250ms a 60000ms). |
 | `AUTHENTICATION_ENABLED` | `false` | Ativa a tela de login para proteger o cofre. |
