@@ -289,6 +289,8 @@ function noteApp() {
         showGraph: false,
         graphInstance: null,
         graphLoaded: false,
+        graphEmpty: false,   // vault returned zero nodes — show the empty state
+        graphError: '',      // non-empty: message shown instead of the canvas
         graphData: null,
         searchResults: [],
         currentSearchHighlight: '', // Track current highlighted search term
@@ -2930,14 +2932,79 @@ function noteApp() {
          * Backend `get_attachment_dir` uses the parent folder of `note_path`.
          * With no note open, infer a synthetic path from `currentMedia` so uploads go to the same
          * `_attachments` folder as the file being viewed (or vault root when appropriate).
+         * On the homepage the currently browsed folder wins, so a file uploaded from
+         * `Projects/` lands in `Projects/_attachments/` instead of the vault root.
          */
         resolveUploadNotePath() {
             if (this.currentNote) return this.currentNote;
-            if (!this.currentMedia) return '';
-            const parts = this.currentMedia.split('/').filter(Boolean);
-            const ai = parts.indexOf('_attachments');
-            if (ai === -1 || ai === 0) return '';
-            return `${parts.slice(0, ai).join('/')}/_.md`;
+            if (this.currentMedia) {
+                const parts = this.currentMedia.split('/').filter(Boolean);
+                const ai = parts.indexOf('_attachments');
+                if (ai === -1 || ai === 0) return '';
+                return `${parts.slice(0, ai).join('/')}/_.md`;
+            }
+            if (this.selectedHomepageFolder) return `${this.selectedHomepageFolder}/_.md`;
+            return '';
+        },
+        
+        /**
+         * 📤 global picker (sidebar / homepage buttons): upload files from anywhere,
+         * including when no note is open. Media lands in the current folder's
+         * `_attachments`; .md files are imported as new notes. When a note
+         * is open its embeds are inserted at the cursor as usual.
+         */
+        async handleGlobalFiles(event) {
+            const input = event.target;
+            const files = Array.from(input.files || []);
+            input.value = ''; // allow re-selecting the same file later
+            
+            if (files.length === 0) return;
+            
+            const mediaFiles = files.filter(file => this.isAttachableMediaFile(file));
+            const markdownFiles = files.filter(file => /\.md$/i.test(file.name || ''));
+            
+            if (mediaFiles.length === 0 && markdownFiles.length === 0) {
+                this.toast(this.t('media.no_valid_files', { formats: MEDIA_FORMATS_DISPLAY }), { type: 'warning' });
+                return;
+            }
+            
+            const notePath = this.resolveUploadNotePath();
+            const textarea = document.getElementById('note-editor');
+            const cursorPos = textarea ? (textarea.selectionStart || 0) : 0;
+            
+            let uploaded = 0;
+            let failed = 0;
+            for (const file of mediaFiles) {
+                try {
+                    const mediaPath = await this.uploadMedia(file, notePath);
+                    if (!mediaPath) continue;
+                    uploaded++;
+                    // Only an open note can receive the embed; otherwise the
+                    // file simply shows up in the sidebar tree.
+                    if (this.currentNote) {
+                        await this.insertMediaMarkdown(mediaPath, file.name, cursorPos);
+                    }
+                } catch (error) {
+                    failed++;
+                    ErrorHandler.handle(`upload ${file.name}`, error);
+                }
+            }
+            
+            for (const file of markdownFiles) {
+                try {
+                    await this.importMarkdownFile(file, cursorPos);
+                } catch (error) {
+                    failed++;
+                    ErrorHandler.handle(`import markdown ${file.name}`, error);
+                }
+            }
+            
+            if (failed > 0) {
+                this.toast(this.t('media.upload_failed'), { type: 'error' });
+            }
+            if (uploaded > 0) {
+                this.toast(this.t('media.upload_success', { count: uploaded }), { type: 'success' });
+            }
         },
         
         // A File can be uploaded when its MIME type is on the accepted list or
@@ -3044,14 +3111,14 @@ function noteApp() {
         },
         
         /**
-         * Import a dropped .md file as a new note in the current note's folder, then insert
-         * a `[Name](path)` link at cursorPos (same shape as sidebar note drops). Filename
-         * collisions get a yyyymmddHHmmss suffix. Size cap comes from UPLOAD_MAX_NOTE_MB —
-         * file.text() would otherwise OOM the browser on a huge drop.
+         * Import a .md file as a new note, then insert a `[Name](path)` link at
+         * cursorPos (same shape as sidebar note drops). The note lands in the
+         * open note's folder, or — with no note open — in the folder being
+         * browsed on the homepage (vault root as a last resort). Filename
+         * collisions get a yyyymmddHHmmss suffix. Size cap comes from
+         * UPLOAD_MAX_NOTE_MB — file.text() would otherwise OOM the browser on a huge drop.
          */
         async importMarkdownFile(file, cursorPos) {
-            if (!this.currentNote) return;
-            
             const maxBytes = this.uploadMaxNoteMb * 1024 * 1024;
             if (file.size > maxBytes) {
                 console.warn(`Rejected markdown drop: ${file.name} is ${(file.size / 1024 / 1024).toFixed(2)}MB, limit is ${this.uploadMaxNoteMb}MB (UPLOAD_MAX_NOTE_MB).`);
@@ -3067,9 +3134,14 @@ function noteApp() {
             }
             const stem = validation.sanitized;
             
-            const currentFolder = this.currentNote.includes('/')
-                ? this.currentNote.substring(0, this.currentNote.lastIndexOf('/'))
-                : '';
+            let currentFolder = '';
+            if (this.currentNote) {
+                currentFolder = this.currentNote.includes('/')
+                    ? this.currentNote.substring(0, this.currentNote.lastIndexOf('/'))
+                    : '';
+            } else if (this.selectedHomepageFolder) {
+                currentFolder = this.selectedHomepageFolder;
+            }
             
             const joinPath = (folder, filename) => folder ? `${folder}/${filename}` : filename;
             let targetPath = joinPath(currentFolder, `${stem}.md`);
@@ -3103,6 +3175,10 @@ function noteApp() {
             const noteName = targetPath.split('/').pop().replace(/\.md$/i, '');
             const encodedPath = targetPath.split('/').map(seg => encodeURIComponent(seg)).join('/');
             const link = `[${noteName}](${encodedPath})`;
+            
+            // No note open (upload from the homepage): the note was created,
+            // there is simply nowhere to drop the link.
+            if (!this.currentNote) return;
             
             const textBefore = this.noteContent.substring(0, cursorPos);
             const textAfter = this.noteContent.substring(cursorPos);
@@ -7238,6 +7314,9 @@ function noteApp() {
         
         // Initialize the graph visualization
         async initGraph() {
+            this.graphError = '';
+            this.graphEmpty = false;
+
             // vis-network (~700 KB) is fetched on first open of the graph
             // overlay — most sessions never open the graph at all.
             if (typeof vis === 'undefined') {
@@ -7257,10 +7336,12 @@ function noteApp() {
                     await this._visLoadPromise;
                 } catch (e) {
                     console.error('vis-network failed to load:', e);
+                    this._graphFail('graph.load_library_failed');
                     return;
                 }
                 if (typeof vis === 'undefined') {
                     console.error('vis-network library not loaded');
+                    this._graphFail('graph.load_library_failed');
                     return;
                 }
             }
@@ -7284,7 +7365,17 @@ function noteApp() {
                 
                 // Get container
                 const container = document.getElementById('graph-overlay');
-                if (!container) return;
+                if (!container) { this.graphLoaded = true; return; }
+                
+                // Nothing to draw: vis-network never emits
+                // "stabilizationIterationsDone" with zero nodes, so the
+                // spinner would spin forever without this early exit.
+                const graphNodes = Array.isArray(data.nodes) ? data.nodes : [];
+                if (graphNodes.length === 0) {
+                    this.graphEmpty = true;
+                    this.graphLoaded = true;
+                    return;
+                }
                 
                 // Get theme colors (force reflow to ensure CSS is applied)
                 document.body.offsetHeight; // Force reflow
@@ -7305,7 +7396,7 @@ function noteApp() {
                 const borderColor = getCssVar('--border-primary', '#e5e7eb');
                 
                 // Prepare nodes with styling - all nodes same base color
-                const nodes = new vis.DataSet(data.nodes.map(n => ({
+                const nodes = new vis.DataSet(graphNodes.map(n => ({
                     id: n.id,
                     label: n.label,
                     title: n.id, // Tooltip shows full path
@@ -7337,7 +7428,8 @@ function noteApp() {
                 })));
                 
                 // Prepare edges with styling based on type
-                const edges = new vis.DataSet(data.edges.map((e, i) => ({
+                const graphEdges = Array.isArray(data.edges) ? data.edges : [];
+                const edges = new vis.DataSet(graphEdges.map((e, i) => ({
                     id: i,
                     from: e.source,
                     to: e.target,
@@ -7436,9 +7528,20 @@ function noteApp() {
                 const graphRef = this.graphInstance;
                 const currentNoteRef = this.currentNote;
                 
-                // Wait for stabilization
-                this.graphInstance.once('stabilizationIterationsDone', () => {
-                    graphRef.setOptions({ physics: { enabled: false } });
+                // Hide the spinner exactly once, whenever stabilization ends.
+                let finished = false;
+                let safetyTimer = null;
+                const finishGraphLoad = () => {
+                    if (finished) return;
+                    finished = true;
+                    if (safetyTimer) clearTimeout(safetyTimer);
+                    if (requestId !== this._graphRequestId) return;
+                    
+                    try {
+                        graphRef.setOptions({ physics: { enabled: false } });
+                    } catch (e) {
+                        // Graph may already have been destroyed
+                    }
                     this.graphLoaded = true;
                     
                     // Focus and select current note if one is loaded
@@ -7465,7 +7568,15 @@ function noteApp() {
                             }
                         }, 150);
                     }
-                });
+                };
+                
+                // "stabilizationIterationsDone" is the normal path, but
+                // vis-network can skip it entirely (0 nodes, a physics pass
+                // that never settles, …). Without this fallback the overlay
+                // would show "Loading graph..." forever.
+                safetyTimer = setTimeout(finishGraphLoad, 10000);
+                this.graphInstance.once('stabilizationIterationsDone', finishGraphLoad);
+                this.graphInstance.once('stabilized', finishGraphLoad);
                 
                 // Click event - open note
                 this.graphInstance.on('click', (params) => {
@@ -7514,8 +7625,15 @@ function noteApp() {
             } catch (error) {
                 if (requestId !== this._graphRequestId) return;
                 console.error('Failed to initialize graph:', error);
-                this.graphLoaded = true; // Stop loading indicator
+                this._graphFail('graph.load_failed');
             }
+        },
+        
+        // Stop the overlay spinner and surface a message instead of failing
+        // silently (a bare console.error left "Loading graph..." up forever).
+        _graphFail(messageKey) {
+            this.graphLoaded = true;
+            this.graphError = this.t(messageKey);
         },
         
         // Add legend to graph container
@@ -7544,7 +7662,10 @@ function noteApp() {
         
         // Refresh graph when theme changes
         refreshGraph() {
-            if (this.viewMode === 'graph' && this.graphInstance) {
+            // The graph lives in its own overlay (showGraph), not in viewMode —
+            // the old `viewMode === 'graph'` test was never true, so themes
+            // never re-rendered the map.
+            if (this.showGraph) {
                 this.initGraph();
             }
         }

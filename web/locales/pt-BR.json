@@ -202,6 +202,10 @@
   "graph": {
     "title": "Grafo",
     "empty": "Nenhuma conexão para exibir",
+    "loading": "Carregando grafo...",
+    "load_failed": "Falha ao carregar o grafo",
+    "load_library_failed": "Falha ao carregar a biblioteca do grafo",
+    "retry": "Tentar novamente",
     "markdown_links": "Links markdown",
     "click_hint": "Clique: selecionar • Duplo clique: abrir"
   },
@@ -232,7 +236,9 @@
   "media": {
     "confirm_delete": "Excluir \"{{name}}\"?",
     "upload_failed": "Falha ao enviar o arquivo",
-    "no_valid_files": "Nenhum arquivo válido encontrado. Suportados: {{formats}}"
+    "no_valid_files": "Nenhum arquivo válido encontrado. Suportados: {{formats}}",
+    "upload_button": "Enviar arquivo",
+    "upload_success": "{{count}} arquivo(s) enviado(s) com sucesso"
   },
   "move": {
     "failed_note": "Falha ao mover a nota.",
