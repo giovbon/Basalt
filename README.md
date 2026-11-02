@@ -2,11 +2,9 @@
 
 Uma aplicação rápida, leve e autocontida para gerenciamento de notas em Markdown, suporte a tags, links bidirecionais (wikilinks), grafo visual, mídias (áudio, vídeo, PDFs, imagens) e busca instantânea de texto completo.
 
-Esta versão possui o **backend totalmente reescrito em Go**, mantendo paridade com o frontend e oferecendo inicialização instantânea, baixo consumo de memória (~20MB) e distribuição em binário único sem dependências externas.
+Esta versão possui o **backend totalmente reescrito em Go**, mantendo paridade com o frontend e oferecendo inicialização instantânea, baixo consumo de memória (~20MB) e distribuição em binário único sem dependências externas. Baseado em [notediscovery](https://github.com/gamosoft/NoteDiscovery).
 
----
-
-## ⚡ Como Rodar Localmente
+## Como Rodar Localmente
 
 ### Pré-requisitos
 - [Go](https://go.dev/) 1.22 ou superior instalado.
@@ -41,9 +39,7 @@ o CSS e commite junto com a mudança:
 ./build-tailwind.sh   # requer Node.js/npm
 ```
 
----
-
-## 🐳 Como Rodar com Docker & Docker Compose
+## Como Rodar com Docker & Docker Compose
 
 ### Usando o `docker-compose.yml`
 
@@ -65,7 +61,7 @@ docker compose down
 ```yaml
 services:
   notediscovery:
-    image: SEU_USUARIO_DOCKERHUB/notediscovery:latest
+    image: giovbon/basalt:latest
     # Ou para construir a partir do código fonte:
     # build: .
     container_name: notediscovery
@@ -96,9 +92,7 @@ docker run -d \
   SEU_USUARIO_DOCKERHUB/notediscovery:latest
 ```
 
----
-
-## ⚙️ Variáveis de Ambiente Suportadas
+## Variáveis de Ambiente Suportadas
 
 Todas as variáveis podem ser definidas no ambiente ou via `docker-compose.yml`:
 
@@ -117,19 +111,3 @@ Todas as variáveis podem ser definidas no ambiente ou via `docker-compose.yml`:
 | `UPLOAD_MAX_AUDIO_MB` | `50` | Tamanho máximo de áudio permitido em upload. |
 | `UPLOAD_MAX_VIDEO_MB` | `100` | Tamanho máximo de vídeo permitido em upload. |
 | `UPLOAD_MAX_PDF_MB` | `20` | Tamanho máximo de PDF permitido em upload. |
-
----
-
-## 🤖 GitHub Actions: Build & Push para o Docker Hub
-
-O projeto inclui um workflow automático em `.github/workflows/docker-publish.yml` que:
-1. Faz o build de imagens **multi-arquitetura** (`linux/amd64` e `linux/arm64`).
-2. Publica as tags no Docker Hub a cada push na branch `main` ou `master` e em novas releases (`v*.*.*`).
-3. Utiliza cache nativo do GitHub Actions para builds rápidos.
-
-### Configurando no seu Repositório do GitHub:
-No seu repositório no GitHub, vá em **Settings** > **Secrets and variables** > **Actions** e crie os dois segredos:
-- `DOCKERHUB_USERNAME`: Seu nome de usuário no Docker Hub.
-- `DOCKERHUB_TOKEN`: Um Personal Access Token (PAT) gerado nas configurações da sua conta no Docker Hub (com permissão de *Read & Write*).
-
-Feito isso, a cada push para a branch principal, a imagem será automaticamente construída e enviada para o Docker Hub.

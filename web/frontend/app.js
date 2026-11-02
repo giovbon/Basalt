@@ -776,6 +776,13 @@ function noteApp() {
             // Watch view mode changes and auto-save
             this.$watch('viewMode', (newValue) => {
                 this.saveViewMode();
+                // Suppress scroll-position stores while Alpine toggles the
+                // panes' visibility: for a few ms after the switch the pane
+                // that is going away can still fire scroll events from a
+                // degenerate layout (width 0), and the bogus editorPct they
+                // produce is applied to the editor by _restoreNoteScroll(),
+                // which is what made the editor jump to the end of the note.
+                this._viewModeSwitching = true;
                 // Re-apply the saved scroll position to whichever pane just became visible.
                 // x-show toggles display:none/block; an overflow:auto element resets its
                 // scrollTop on that transition, so the previously-hidden pane lands at 0
@@ -784,6 +791,11 @@ function noteApp() {
                 this.$nextTick(() => {
                     requestAnimationFrame(() => {
                         this._restoreNoteScroll();
+                        // One more frame: lets any scroll event emitted by the
+                        // layout settle pass through while still suppressed.
+                        requestAnimationFrame(() => {
+                            this._viewModeSwitching = false;
+                        });
                     });
                 });
             });
@@ -6623,6 +6635,15 @@ function noteApp() {
                 this._editorSyncFrame = requestAnimationFrame(() => {
                     this._editorSyncFrame = null;
 
+                    // Skip while this pane has no layout width: during a
+                    // view-mode switch the not-yet-hidden pane briefly
+                    // collapses to width 0, which makes the textarea wrap
+                    // character-by-character and produce a degenerate
+                    // percentage (editorPct=1). Storing that is what made the
+                    // editor "jump to the end" on the next restore.
+                    if (editor.clientWidth <= 0) return;
+                    if (this._viewModeSwitching) return;
+
                     // Landmark-anchored sync using EDITOR PERCENTAGE (not line
                     // index — see _buildAnchorRange for the wrap-safety reason).
                     // Preview lands at the pixel position interpolated between
@@ -6667,6 +6688,12 @@ function noteApp() {
                 if (this._previewSyncFrame) return;
                 this._previewSyncFrame = requestAnimationFrame(() => {
                     this._previewSyncFrame = null;
+
+                    // Same degenerate-width guard as the editor handler: a
+                    // zero-width preview wraps every character onto its own
+                    // line and would store a bogus editorPct.
+                    if (preview.clientWidth <= 0) return;
+                    if (this._viewModeSwitching) return;
 
                     const previewScrollable = preview.scrollHeight - preview.clientHeight;
                     if (previewScrollable <= 0) return;

@@ -284,6 +284,15 @@
             overflow-x: auto;
         }
         
+        /* Modo visualizar/editar: impede que o painel que não está ativo
+           colapse para largura ZERO enquanto o outro ocupa 100%. Com largura
+           zero o preview quebra o texto caractere a caractere, o evento de
+           scroll salva uma posição degenerada (editorPct=1) e o editor
+           "pula para o final" ao trocar de modo. */
+        .pane-no-shrink {
+            flex-shrink: 0;
+        }
+        
         /* Syntax Highlighting Overlay */
         .editor-wrapper {
             position: relative;
@@ -877,6 +886,19 @@
             .flex-1.overflow-y-auto {
                 padding-bottom: 70px;
                 padding-bottom: calc(70px + env(safe-area-inset-bottom));
+            }
+            
+            /* The fixed mobile tab bar (56px) overlays the bottom of the
+               note panes. Give the editor, its syntax overlay (both must
+               keep identical padding or the highlight drifts) and the
+               preview enough bottom padding that the last line can scroll
+               clear of the bar. */
+            .editor-textarea,
+            .syntax-overlay {
+                padding-bottom: calc(1.5rem + 64px) !important;
+            }
+            .markdown-preview {
+                padding-bottom: calc(1.5rem + 64px) !important;
             }
             
             /* Mobile overlay */
@@ -2674,6 +2696,7 @@
                         <div 
                             x-show="!currentMedia && (viewMode === 'edit' || viewMode === 'split')"
                             class="flex flex-col"
+                            :class="viewMode !== 'split' ? 'pane-no-shrink' : ''"
                             style="min-height: 0;"
                             :style="viewMode === 'split' ? `width: ${editorWidth}%;` : 'width: 100%;'"
                         >
@@ -2781,6 +2804,7 @@
                         <div 
                             x-show="(viewMode === 'preview' || viewMode === 'split') && !currentMedia"
                             class="overflow-y-auto overflow-x-hidden custom-scrollbar"
+                            :class="viewMode !== 'split' ? 'pane-no-shrink' : ''"
                             style="background-color: var(--bg-primary); min-height: 0;"
                             :style="viewMode === 'split' ? `width: ${100 - editorWidth}%;` : 'width: 100%;'"
                         >

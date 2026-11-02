@@ -26,11 +26,11 @@ jobs:
       - name: Build Multi-Arch Binaries
         run: |
           mkdir -p bin
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o bin/notediscovery-amd64 ./cmd/notediscovery
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o bin/notediscovery-arm64 ./cmd/notediscovery
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o bin/basalt-amd64 ./cmd/basalt
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o bin/basalt-arm64 ./cmd/basalt
           ls -lh bin/
           # Falha o workflow se algum artefato nao for um executavel ELF
-          for f in bin/notediscovery-*; do
+          for f in bin/basalt-*; do
             head -c 4 "$f" | grep -q ELF || { echo "ERRO: $f nao e um binario ELF"; exit 1; }
           done
 
@@ -50,7 +50,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/notediscovery
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/basalt
           tags: |
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' }}
             type=semver,pattern={{version}}
