@@ -20,6 +20,9 @@ const CONFIG = {
     TOAST_DURATION_SUCCESS_MS: 3500,
 };
 
+// Combining marks removed by _foldForSearch (accent-insensitive matching).
+const SEARCH_COMBINING_MARKS = /\p{M}/gu;
+
 // localStorage settings configuration - centralized definition of all persisted settings
 const LOCAL_SETTINGS = {
     // Boolean settings
@@ -381,6 +384,7 @@ function noteApp() {
         // Search state
         searchDebounceTimeout: null,
         isSearching: false,
+        expandedSearchResults: {}, // note path -> true when its occurrence list is open
         
         // Outline (TOC) state
         outline: [], // [{level: 1, text: 'Heading', slug: 'heading'}, ...]
@@ -688,6 +692,9 @@ function noteApp() {
             
             // Store global reference for native event handlers in x-html content
             window.$root = this;
+
+            // Hover cards for internal links in the preview
+            this.initLinkPreviews();
             
             // ESC key to cancel drag operations
             document.addEventListener('keydown', (e) => {
@@ -719,7 +726,8 @@ function noteApp() {
                 if (e.state && e.state.notePath) {
                     // Navigating to a note
                     const searchQuery = e.state.searchQuery || '';
-                    this.loadNote(e.state.notePath, false, searchQuery); // false = don't update history
+                    const targetLine = e.state.targetLine || null;
+                    this.loadNote(e.state.notePath, false, searchQuery, targetLine); // false = don't update history
                     
                     // Update search box and trigger search if needed
                     if (searchQuery) {
@@ -728,6 +736,7 @@ function noteApp() {
                     } else {
                         this.searchQuery = '';
                         this.searchResults = [];
+                        this.expandedSearchResults = {};
                         this.clearSearchHighlights();
                     }
                 } else if (e.state && e.state.mediaPath) {
@@ -761,6 +770,7 @@ function noteApp() {
                     // Clear search
                     this.searchQuery = '';
                     this.searchResults = [];
+                    this.expandedSearchResults = {};
                     this.clearSearchHighlights();
                 }
             });
@@ -1729,7 +1739,8 @@ function noteApp() {
         // caret sits inside an unfinished [[ / ![[ token.
         wlDetectToken() {
             const textarea = document.getElementById('note-editor');
-            if (!textarea || document.activeElement !== textarea) { this.wlClose(); return; }
+            if (!textarea) { this.wlClose(); return; }
+            if (document.activeElement !== textarea) { this.wlClose(); return; }
             if (textarea.selectionStart !== textarea.selectionEnd) { this.wlClose(); return; }
 
             const caret = textarea.selectionStart;
@@ -1866,7 +1877,7 @@ function noteApp() {
         },
 
         wlClose() {
-            if (this.wikilinkAutocomplete.open) this.wikilinkAutocomplete.open = false;
+            this.wikilinkAutocomplete.open = false;
         },
 
         // Position the popup just below the caret, clamped to the viewport.
@@ -2074,6 +2085,7 @@ function noteApp() {
             if (!hasTextSearch && !hasTagFilter) {
                 this.isSearching = false;
                 this.searchResults = [];
+                this.expandedSearchResults = {};
                 this.currentSearchHighlight = '';
                 this.clearSearchHighlights();
                 this.buildFolderTree();
@@ -2086,6 +2098,7 @@ function noteApp() {
                 this.searchResults = this.notes.filter(note => 
                     note.type === 'note' && this.noteMatchesTags(note)
                 );
+                this.expandedSearchResults = {};
                 this.currentSearchHighlight = '';
                 this.clearSearchHighlights();
                 return;
@@ -2108,6 +2121,16 @@ function noteApp() {
                     }
                     
                     this.searchResults = results;
+
+                    // Keep groups the user already expanded, but drop paths that
+                    // disappeared from the new result set.
+                    const expanded = {};
+                    for (const result of results) {
+                        if (this.expandedSearchResults[result.path]) {
+                            expanded[result.path] = true;
+                        }
+                    }
+                    this.expandedSearchResults = expanded;
                     
                     // Highlight search term in current note if open
                     if (this.currentNote && this.noteContent) {
@@ -2955,7 +2978,16 @@ function noteApp() {
                 if (ai === -1 || ai === 0) return '';
                 return `${parts.slice(0, ai).join('/')}/_.md`;
             }
-            if (this.selectedHomepageFolder) return `${this.selectedHomepageFolder}/_.md`;
+            if (this.selectedHomepageFolder) {
+                // Browsing an _attachments folder must upload to its parent's
+                // attachments, otherwise every upload creates another
+                // _attachments level inside it.
+                const parts = this.selectedHomepageFolder.split('/').filter(Boolean);
+                const ai = parts.indexOf('_attachments');
+                const base = ai === -1 ? parts : parts.slice(0, ai);
+                if (base.length === 0) return '';
+                return `${base.join('/')}/_.md`;
+            }
             return '';
         },
         
@@ -3312,14 +3344,14 @@ function noteApp() {
         },
         
         // Open a note or media file (unified handler for sidebar/homepage clicks)
-        openItem(path, type = 'note', searchHighlight = '') {
+        openItem(path, type = 'note', searchHighlight = '', targetLine = null) {
             this.showGraph = false;
             // Check if it's a media file by type or extension
             const mediaType = type !== 'note' ? type : this.getMediaType(path);
             if (mediaType && mediaType !== 'note') {
                 this.viewMedia(path, mediaType);
             } else {
-                this.loadNote(path, true, searchHighlight);
+                this.loadNote(path, true, searchHighlight, targetLine);
             }
         },
         
@@ -3528,6 +3560,336 @@ function noteApp() {
             this.lastSaved = false;
             this._persistTaskToggle(oldLine, toggled);
             return true;
+        },
+
+        // ---- Hover previews for internal links --------------------------------
+        // A small card next to a link shows the target note (or the linked
+        // heading's section) so the user can peek without opening it. Bound
+        // once to the document so it also works after Alpine re-renders the
+        // preview HTML on every keystroke.
+        initLinkPreviews() {
+            if (this._linkPreviewBound) return;
+            this._linkPreviewBound = true;
+            this._linkPreviewCache = new Map();
+
+            const selector = '.markdown-preview a[href]';
+            const linkFrom = (event) => {
+                const target = event.target;
+                return target && target.closest ? target.closest(selector) : null;
+            };
+
+            document.addEventListener('mouseover', (event) => {
+                const link = linkFrom(event);
+                if (!link) return;
+                this._scheduleLinkPreview(link);
+            });
+
+            document.addEventListener('mouseout', (event) => {
+                const link = linkFrom(event);
+                if (!link) return;
+                if (event.relatedTarget && link.contains(event.relatedTarget)) return;
+                this._scheduleLinkPreviewHide();
+            });
+
+            // Scrolling the page moves the anchor, so the card would float in
+            // the wrong place. Scrolling inside the card itself is fine.
+            document.addEventListener('scroll', (event) => {
+                if (event.target && event.target.closest && event.target.closest('#link-preview-card')) return;
+                this._hideLinkPreview();
+            }, true);
+
+            document.addEventListener('keydown', (event) => {
+                if (event.key === 'Escape') this._hideLinkPreview();
+            });
+
+            document.addEventListener('click', (event) => {
+                if (linkFrom(event)) this._hideLinkPreview();
+            }, true);
+        },
+
+        _ensureLinkPreviewCard() {
+            let card = document.getElementById('link-preview-card');
+            if (card) return card;
+
+            card = document.createElement('div');
+            card.id = 'link-preview-card';
+            card.className = 'link-preview-card';
+            card.setAttribute('role', 'tooltip');
+            card.addEventListener('mouseenter', () => {
+                clearTimeout(this._linkPreviewHideTimer);
+            });
+            card.addEventListener('mouseleave', () => {
+                this._scheduleLinkPreviewHide();
+            });
+            document.body.appendChild(card);
+            return card;
+        },
+
+        // Resolve an <a> in the preview to the note it points at. Returns null
+        // for external/media links and unresolved notes.
+        _resolveLinkPreviewTarget(link) {
+            const href = (link.getAttribute('href') || '').trim();
+            if (!href) return null;
+
+            const externalPrefixes = [
+                'http://', 'https://', '//', 'mailto:', 'tel:', 'ssh:', 'ftp:',
+                'sftp:', 'slack:', 'discord:', 'teams:', 'vscode:', 'zoom:',
+                'whatsapp:', 'telegram:', 'signal:', 'spotify:', 'steam:',
+                'magnet:', 'data:', '/api/'
+            ];
+            if (externalPrefixes.some((prefix) => href.startsWith(prefix))) return null;
+
+            let decodedHref = href;
+            try {
+                decodedHref = decodeURIComponent(href);
+            } catch (e) {
+                // A literal '%' in a filename must not break the preview.
+            }
+
+            const hashIndex = decodedHref.indexOf('#');
+            let rawPath = hashIndex !== -1 ? decodedHref.substring(0, hashIndex) : decodedHref;
+            const anchor = hashIndex !== -1 ? decodedHref.substring(hashIndex + 1) : '';
+            rawPath = rawPath.split('?')[0];
+            const notePath = rawPath.replace(/^\/+/, '');
+
+            // In-page anchor: preview the corresponding section of this note.
+            if (!notePath) {
+                if (!anchor || !this.currentNote) return null;
+                const currentName = this.currentNote.split('/').pop().replace(/\.md$/i, '');
+                return {
+                    path: this.currentNote,
+                    anchor,
+                    label: currentName || this.currentNote,
+                };
+            }
+
+            let targetNote = this.notes.find((note) =>
+                note.path === notePath || note.path === notePath + '.md'
+            );
+
+            if (!targetNote) {
+                const sourceFolder = this.currentNote && this.currentNote.includes('/')
+                    ? this.currentNote.substring(0, this.currentNote.lastIndexOf('/'))
+                    : '';
+                const resolved = this.resolveWikiLink(notePath, sourceFolder);
+                if (resolved) {
+                    targetNote = this.notes.find((note) =>
+                        note.path === resolved || note.path === resolved + '.md'
+                    );
+                }
+            }
+
+            // Media has its own viewer and no markdown text to preview.
+            if (!targetNote || (targetNote.type && targetNote.type !== 'note')) return null;
+
+            return {
+                path: targetNote.path,
+                anchor,
+                label: (anchor && link.textContent.includes('#'))
+                    ? (targetNote.name || targetNote.path)
+                    : (link.textContent.trim() || targetNote.name || targetNote.path),
+            };
+        },
+
+        _scheduleLinkPreview(link) {
+            const target = this._resolveLinkPreviewTarget(link);
+            if (!target) {
+                this._scheduleLinkPreviewHide();
+                return;
+            }
+            if (this._linkPreviewAnchor === link) {
+                clearTimeout(this._linkPreviewHideTimer);
+                return;
+            }
+
+            clearTimeout(this._linkPreviewTimer);
+            clearTimeout(this._linkPreviewHideTimer);
+            this._linkPreviewAnchor = link;
+            this._linkPreviewTimer = setTimeout(() => {
+                this._showLinkPreview(link, target);
+            }, 220);
+        },
+
+        _scheduleLinkPreviewHide() {
+            clearTimeout(this._linkPreviewTimer);
+            clearTimeout(this._linkPreviewHideTimer);
+            this._linkPreviewHideTimer = setTimeout(() => this._hideLinkPreview(), 180);
+        },
+
+        _hideLinkPreview() {
+            clearTimeout(this._linkPreviewTimer);
+            clearTimeout(this._linkPreviewHideTimer);
+            this._linkPreviewAnchor = null;
+            this._linkPreviewToken = (this._linkPreviewToken || 0) + 1;
+            const card = document.getElementById('link-preview-card');
+            if (card) card.classList.remove('is-visible');
+        },
+
+        _linkPreviewHeader(label, anchor) {
+            const safeLabel = this.escapeHtml(label || '');
+            const anchorHtml = anchor
+                ? `<span class="link-preview-anchor">#${this.escapeHtml(anchor)}</span>`
+                : '';
+            return `<div class="link-preview-header"><span class="link-preview-title">${safeLabel}</span>${anchorHtml}</div>`;
+        },
+
+        async _showLinkPreview(link, target) {
+            this._linkPreviewTimer = null;
+            const token = (this._linkPreviewToken || 0) + 1;
+            this._linkPreviewToken = token;
+            const card = this._ensureLinkPreviewCard();
+
+            card.innerHTML = this._linkPreviewHeader(target.label, target.anchor) +
+                `<div class="link-preview-loading">${this.escapeHtml(this.t('common.loading'))}</div>`;
+            this._positionLinkPreview(card, link);
+            card.classList.add('is-visible');
+
+            try {
+                const data = await this._loadLinkPreviewData(target.path);
+                if (token !== this._linkPreviewToken || this._linkPreviewAnchor !== link) return;
+
+                card.innerHTML = this._linkPreviewHeader(target.label, target.anchor) +
+                    `<div class="link-preview-body markdown-preview">${this._buildLinkPreviewHTML(data, target.anchor)}</div>`;
+                this._positionLinkPreview(card, link);
+            } catch (error) {
+                if (token !== this._linkPreviewToken || this._linkPreviewAnchor !== link) return;
+                card.innerHTML = this._linkPreviewHeader(target.label, target.anchor) +
+                    `<div class="link-preview-error">${this.escapeHtml(this.t('common.error'))}</div>`;
+                this._positionLinkPreview(card, link);
+            }
+        },
+
+        async _loadLinkPreviewData(notePath) {
+            // In-page anchors and self-links should reflect unsaved edits, not
+            // the last version written to disk.
+            if (notePath === this.currentNote) {
+                return {
+                    content: this.noteContent || '',
+                    outline: this.outline || [],
+                    at: Date.now(),
+                };
+            }
+
+            if (!this._linkPreviewCache) this._linkPreviewCache = new Map();
+            const cached = this._linkPreviewCache.get(notePath);
+            if (cached && Date.now() - cached.at < 30000) return cached;
+
+            const response = await fetch(`/api/notes/${encodeVaultPath(notePath)}`);
+            if (!response.ok) throw new Error('Failed to load preview');
+            const data = await response.json();
+            const entry = {
+                content: data.content || '',
+                outline: Array.isArray(data.outline) ? data.outline : [],
+                at: Date.now(),
+            };
+            this._linkPreviewCache.set(notePath, entry);
+            return entry;
+        },
+
+        _linkPreviewSlug(text) {
+            return (text || '')
+                .toLowerCase()
+                .replace(/[^\w\s-]/g, '')
+                .replace(/\s+/g, '-')
+                .replace(/-+/g, '-');
+        },
+
+        // Pick the text to show: the linked heading's section when there is an
+        // anchor, otherwise the beginning of the note.
+        _linkPreviewExcerpt(content, outline, anchor) {
+            const lines = (content || '').split('\n');
+
+            // Keep original line numbers so outline entries (which count from
+            // the top of the file) still point at the right place. Only the
+            // default start line moves past a leading YAML block.
+            let contentStart = 0;
+            if (lines.length > 0 && lines[0].trim() === '---') {
+                const end = lines.findIndex((line, i) => i > 0 && line.trim() === '---');
+                if (end !== -1) contentStart = end + 1;
+            }
+
+            let startLine = contentStart + 1;
+            let endLine = lines.length;
+
+            if (anchor) {
+                const slug = this._linkPreviewSlug(anchor);
+                const items = Array.isArray(outline) ? outline : [];
+                const heading = items.find((item) =>
+                    item.slug === slug ||
+                    this._linkPreviewSlug(item.text) === slug ||
+                    (item.text || '').toLowerCase() === anchor.toLowerCase()
+                );
+                if (heading && heading.line > 0) {
+                    startLine = heading.line;
+                    const next = items.find((item) =>
+                        item.line > heading.line && item.level <= heading.level
+                    );
+                    if (next) endLine = next.line - 1;
+                }
+            }
+
+            let excerptLines = lines.slice(startLine - 1, endLine);
+            if (excerptLines.join('').trim() === '') {
+                excerptLines = lines.slice(contentStart, contentStart + 40);
+            }
+
+            const maxLines = 80;
+            let excerpt = excerptLines.slice(0, maxLines).join('\n').trim();
+            if (excerptLines.length > maxLines) excerpt += '\n\n…';
+
+            const maxChars = 6000;
+            if (excerpt.length > maxChars) excerpt = excerpt.slice(0, maxChars).trimEnd() + '…';
+            return excerpt;
+        },
+
+        _buildLinkPreviewHTML(data, anchor) {
+            const excerpt = this._linkPreviewExcerpt(data.content, data.outline, anchor);
+            if (!excerpt) {
+                return '<p class="link-preview-empty">—</p>';
+            }
+
+            let html = DOMPurify.sanitize(marked.parse(excerpt));
+            const container = document.createElement('div');
+            container.innerHTML = html;
+
+            // A card is for reading, not for navigating or loading media.
+            container.querySelectorAll('img, video, audio, iframe, input, button, .media-embed, .md-pdf-embed')
+                .forEach((el) => el.remove());
+            container.querySelectorAll('a').forEach((a) => {
+                a.removeAttribute('href');
+                a.removeAttribute('target');
+                a.removeAttribute('rel');
+            });
+
+            return container.innerHTML;
+        },
+
+        _positionLinkPreview(card, link) {
+            const margin = 10;
+            const rect = link.getBoundingClientRect();
+            const wasHidden = !card.classList.contains('is-visible');
+
+            if (wasHidden) {
+                card.style.visibility = 'hidden';
+                card.classList.add('is-visible');
+            }
+
+            const cardRect = card.getBoundingClientRect();
+            let left = rect.left;
+            const maxLeft = window.innerWidth - cardRect.width - margin;
+            if (left > maxLeft) left = maxLeft;
+            if (left < margin) left = margin;
+
+            let top = rect.bottom + 8;
+            if (top + cardRect.height > window.innerHeight - margin) {
+                top = rect.top - cardRect.height - 8;
+            }
+            if (top < margin) top = margin;
+
+            card.style.left = `${Math.round(left)}px`;
+            card.style.top = `${Math.round(top)}px`;
+
+            if (wasHidden) card.style.visibility = '';
         },
 
         // Handle clicks on internal links in preview
@@ -3771,8 +4133,9 @@ function noteApp() {
         },
         
         
-        // Load a specific note
-        async loadNote(notePath, updateHistory = true, searchQuery = '') {
+        // Load a specific note. targetLine is the 1-based source line to focus
+        // when the note was opened from a specific search occurrence.
+        async loadNote(notePath, updateHistory = true, searchQuery = '', targetLine = null) {
             try {
                 // Close mobile sidebar when a note is selected
                 this.mobileSidebarOpen = false;
@@ -3834,15 +4197,20 @@ function noteApp() {
                     const pathWithoutExtension = notePath.replace('.md', '');
                     // Encode each path segment to handle special characters
                     const encodedPath = pathWithoutExtension.split('/').map(segment => encodeURIComponent(segment)).join('/');
-                    let url = `/${encodedPath}`;
-                    // Add search query parameter if present
+                    const params = new URLSearchParams();
                     if (searchQuery) {
-                        url += `?search=${encodeURIComponent(searchQuery)}`;
+                        params.set('search', searchQuery);
                     }
+                    if (targetLine) {
+                        params.set('line', String(targetLine));
+                    }
+                    const queryString = params.toString();
+                    const url = `/${encodedPath}${queryString ? `?${queryString}` : ''}`;
                     window.history.pushState(
                         { 
                             notePath: notePath, 
                             searchQuery: searchQuery,
+                            targetLine: targetLine,
                             homepageFolder: this.selectedHomepageFolder || '' // Save current folder state
                         },
                         '',
@@ -3871,23 +4239,35 @@ function noteApp() {
                     this.$nextTick(() => {
                         this.refreshDOMCache();
                         this.setupScrollSync();
-                        // First pass: editor is ready (textarea reflows synchronously). Preview
-                        // may still have scrollHeight=0 because the markdown render pipeline
-                        // (marked + MathJax + Mermaid + syntax highlighting) is async.
-                        this._restoreNoteScroll();
-                        // Second pass on a later frame: by now the preview pane has typically
-                        // rendered and laid out, so its scrollTop write actually sticks. The
-                        // helper is idempotent — re-running for the editor is a no-op.
-                        requestAnimationFrame(() => {
+
+                        // When the note was opened from a search result, the
+                        // target line/match wins over the last scroll position.
+                        // Otherwise the delayed restore below would drag the
+                        // viewport back to wherever the user stopped reading.
+                        const focusSearchTarget = !!(searchQuery || (targetLine && targetLine > 0));
+                        if (!focusSearchTarget) {
+                            // First pass: editor is ready (textarea reflows synchronously). Preview
+                            // may still have scrollHeight=0 because the markdown render pipeline
+                            // (marked + MathJax + Mermaid + syntax highlighting) is async.
+                            this._restoreNoteScroll();
+                            // Second pass on a later frame: by now the preview pane has typically
+                            // rendered and laid out, so its scrollTop write actually sticks. The
+                            // helper is idempotent — re-running for the editor is a no-op.
                             requestAnimationFrame(() => {
-                                this._restoreNoteScroll();
+                                requestAnimationFrame(() => {
+                                    this._restoreNoteScroll();
+                                });
                             });
-                        });
+                        }
 
                         // Apply or clear search highlighting
                         if (searchQuery) {
                             // Pass true to focus editor when loading from search result
-                            this.highlightSearchTerm(searchQuery, true);
+                            this.highlightSearchTerm(searchQuery, true, targetLine);
+                        } else if (targetLine) {
+                            this.scrollEditorToLine(targetLine);
+                            this.scrollPreviewToSourceLine(targetLine);
+                            this.clearSearchHighlights();
                         } else {
                             this.clearSearchHighlights();
                         }
@@ -3932,13 +4312,15 @@ function noteApp() {
                 // It's a note, add .md extension and load it
                 const notePath = decodedPath + '.md';
                 
-                // Parse query string for search parameter
+                // Parse query string for search parameter and optional line anchor
                 const urlParams = new URLSearchParams(window.location.search);
                 const searchParam = urlParams.get('search');
+                const lineParam = parseInt(urlParams.get('line') || '', 10);
+                const targetLine = Number.isFinite(lineParam) && lineParam > 0 ? lineParam : null;
                 
                 // Try to load the note directly - the backend will handle 404 if it doesn't exist
                 // This is more robust than checking the frontend notes list
-                this.loadNote(notePath, false, searchParam || '');
+                this.loadNote(notePath, false, searchParam || '', targetLine);
                 
                 // If there's a search parameter, populate the search box and trigger search
                 if (searchParam) {
@@ -3949,8 +4331,70 @@ function noteApp() {
             }
         },
         
+        // Fold text for accent-insensitive, case-insensitive matching. Returns
+        // the folded string plus a map from each folded code unit to the
+        // original index, so highlights can slice the original text even when
+        // NFD normalization changes its length.
+        _foldForSearch(text) {
+            // Fast path: ASCII lowercases 1:1, so the index map is the identity.
+            let ascii = true;
+            for (let i = 0; i < text.length; i++) {
+                if (text.charCodeAt(i) > 127) {
+                    ascii = false;
+                    break;
+                }
+            }
+            if (ascii) {
+                const map = new Array(text.length + 1);
+                for (let i = 0; i <= text.length; i++) map[i] = i;
+                return { text: text.toLowerCase(), map };
+            }
+
+            const chars = [];
+            const map = [];
+            for (let i = 0; i < text.length; i++) {
+                const folded = text[i]
+                    .normalize('NFD')
+                    .replace(SEARCH_COMBINING_MARKS, '')
+                    .toLowerCase();
+                for (let j = 0; j < folded.length; j++) {
+                    chars.push(folded[j]);
+                    map.push(i);
+                }
+            }
+            map.push(text.length);
+            return { text: chars.join(''), map };
+        },
+
+        // First folded index whose original position is >= origIndex.
+        _foldedIndexForOriginal(map, origIndex) {
+            let low = 0;
+            let high = map.length - 1;
+            while (low < high) {
+                const mid = (low + high) >> 1;
+                if (map[mid] < origIndex) {
+                    low = mid + 1;
+                } else {
+                    high = mid;
+                }
+            }
+            return low;
+        },
+
+        // 0-based character offset where a 1-based source line starts.
+        _lineStartOffset(content, line) {
+            if (line <= 1) return 0;
+            let offset = 0;
+            for (let i = 1; i < line; i++) {
+                const newline = content.indexOf('\n', offset);
+                if (newline === -1) return content.length;
+                offset = newline + 1;
+            }
+            return offset;
+        },
+
         // Highlight search term in editor and preview
-        highlightSearchTerm(query, focusEditor = false) {
+        highlightSearchTerm(query, focusEditor = false, targetLine = null) {
             if (!query || !query.trim()) {
                 this.clearSearchHighlights();
                 return;
@@ -3959,50 +4403,73 @@ function noteApp() {
             const searchTerm = query.trim();
             
             // Highlight in editor (textarea)
-            this.highlightInEditor(searchTerm, focusEditor);
+            this.highlightInEditor(searchTerm, focusEditor, targetLine);
             
             // Highlight in preview (rendered HTML)
-            this.highlightInPreview(searchTerm);
+            this.highlightInPreview(searchTerm, targetLine);
         },
         
         // Highlight search term in the editor textarea
-        highlightInEditor(searchTerm, shouldFocus = false) {
+        highlightInEditor(searchTerm, shouldFocus = false, targetLine = null) {
             const editor = this._domCache.editor || document.getElementById('editor');
             if (!editor) return;
             
-            // For textarea, we can't directly highlight text, but we can scroll to first match
+            // A textarea cannot contain styled marks, so the editor side is
+            // about scrolling to (and optionally selecting) the right match.
             const content = editor.value;
-            const lowerContent = content.toLowerCase();
-            const lowerTerm = searchTerm.toLowerCase();
-            const index = lowerContent.indexOf(lowerTerm);
-            
-            if (index !== -1) {
-                // Calculate line number to scroll to
-                const textBefore = content.substring(0, index);
-                const lineNumber = textBefore.split('\n').length;
-                
-                // Scroll to approximate position
-                const lineHeight = 20; // Approximate line height in pixels
-                editor.scrollTop = (lineNumber - 5) * lineHeight; // Scroll a bit above to show context
-                
-                // Only focus and select if explicitly requested (e.g., from search result click)
-                if (shouldFocus) {
-                    editor.focus();
-                    editor.setSelectionRange(index, index + searchTerm.length);
-                    
-                    // Blur immediately so the selection stays visible but editor isn't focused
-                    setTimeout(() => editor.blur(), 100);
+            const foldedContent = this._foldForSearch(content);
+            const foldedTerm = this._foldForSearch(searchTerm).text;
+            if (!foldedTerm) return;
+
+            let index = -1;
+            let foundOnTargetLine = false;
+            if (targetLine && targetLine > 0) {
+                const lineStart = this._lineStartOffset(content, targetLine);
+                const lineEnd = this._lineStartOffset(content, targetLine + 1);
+                const foldedStart = this._foldedIndexForOriginal(foldedContent.map, lineStart);
+                const candidate = foldedContent.text.indexOf(foldedTerm, foldedStart);
+                // Only accept the candidate when it actually starts on the
+                // requested line; otherwise the note changed since the search.
+                if (candidate !== -1 && foldedContent.map[candidate] < lineEnd) {
+                    index = candidate;
+                    foundOnTargetLine = true;
                 }
+            }
+            // Fall back to the first occurrence when the requested line has no
+            // match (e.g. the line number came from a different revision).
+            if (index === -1) {
+                index = foldedContent.text.indexOf(foldedTerm);
+            }
+
+            const lineHeight = parseFloat(getComputedStyle(editor).lineHeight) || 20;
+            if (foundOnTargetLine) {
+                editor.scrollTop = Math.max(0, (targetLine - 5) * lineHeight);
+            } else if (index !== -1) {
+                const lineNumber = content.substring(0, foldedContent.map[index]).split('\n').length;
+                editor.scrollTop = Math.max(0, (lineNumber - 5) * lineHeight);
+            }
+
+            if (index !== -1 && shouldFocus) {
+                const start = foldedContent.map[index];
+                const end = foldedContent.map[index + foldedTerm.length];
+                editor.focus();
+                editor.setSelectionRange(start, end);
+                
+                // Blur immediately so the selection stays visible but editor isn't focused
+                setTimeout(() => editor.blur(), 100);
             }
         },
         
         // Highlight search term in the preview pane
-        highlightInPreview(searchTerm) {
+        highlightInPreview(searchTerm, targetLine = null) {
             const preview = document.querySelector('.markdown-preview');
             if (!preview) return;
             
             // Remove existing highlights
             this.clearSearchHighlights();
+
+            const foldedTerm = this._foldForSearch(searchTerm).text;
+            if (!foldedTerm) return;
             
             // Create a tree walker to find all text nodes
             const walker = document.createTreeWalker(
@@ -4016,55 +4483,60 @@ function noteApp() {
             let node;
             while (node = walker.nextNode()) {
                 // Skip code blocks and pre tags
-                if (node.parentElement.tagName === 'CODE' || 
-                    node.parentElement.tagName === 'PRE') {
+                if (node.parentElement && (node.parentElement.tagName === 'CODE' || 
+                    node.parentElement.tagName === 'PRE')) {
                     continue;
                 }
                 textNodes.push(node);
             }
             
-            const lowerTerm = searchTerm.toLowerCase();
             let matchIndex = 0;
             
             // Highlight matches in text nodes
             textNodes.forEach(textNode => {
                 const text = textNode.textContent;
-                const lowerText = text.toLowerCase();
+                const foldedText = this._foldForSearch(text);
                 
-                if (lowerText.includes(lowerTerm)) {
-                    const fragment = document.createDocumentFragment();
-                    let lastIndex = 0;
-                    let index;
+                const fragment = document.createDocumentFragment();
+                let lastOriginal = 0;
+                let searchFrom = 0;
+                let matchesInNode = 0;
+                let index;
+                
+                while ((index = foldedText.text.indexOf(foldedTerm, searchFrom)) !== -1) {
+                    const start = foldedText.map[index];
+                    const end = foldedText.map[index + foldedTerm.length];
                     
-                    while ((index = lowerText.indexOf(lowerTerm, lastIndex)) !== -1) {
-                        // Add text before match
-                        if (index > lastIndex) {
-                            fragment.appendChild(
-                                document.createTextNode(text.substring(lastIndex, index))
-                            );
-                        }
-                        
-                        // Add highlighted match
-                        const mark = document.createElement('mark');
-                        mark.className = 'search-highlight';
-                        mark.setAttribute('data-match-index', matchIndex);
-                        mark.textContent = text.substring(index, index + searchTerm.length);
-                        
-                        // First match is active (styled via CSS)
-                        if (matchIndex === 0) {
-                            mark.classList.add('active-match');
-                        }
-                        
-                        fragment.appendChild(mark);
-                        matchIndex++;
-                        
-                        lastIndex = index + searchTerm.length;
+                    // Add text before match
+                    if (start > lastOriginal) {
+                        fragment.appendChild(
+                            document.createTextNode(text.substring(lastOriginal, start))
+                        );
                     }
                     
+                    // Add highlighted match
+                    const mark = document.createElement('mark');
+                    mark.className = 'search-highlight';
+                    mark.setAttribute('data-match-index', matchIndex);
+                    mark.textContent = text.substring(start, end);
+                    
+                    // First match is active (styled via CSS)
+                    if (matchIndex === 0) {
+                        mark.classList.add('active-match');
+                    }
+                    
+                    fragment.appendChild(mark);
+                    matchIndex++;
+                    matchesInNode++;
+                    lastOriginal = end;
+                    searchFrom = index + foldedTerm.length;
+                }
+                
+                if (matchesInNode > 0) {
                     // Add remaining text
-                    if (lastIndex < text.length) {
+                    if (lastOriginal < text.length) {
                         fragment.appendChild(
-                            document.createTextNode(text.substring(lastIndex))
+                            document.createTextNode(text.substring(lastOriginal))
                         );
                     }
                     
@@ -4077,10 +4549,76 @@ function noteApp() {
             this.totalMatches = matchIndex;
             this.currentMatchIndex = matchIndex > 0 ? 0 : -1;
             
-            // Scroll to first match
-            if (this.totalMatches > 0) {
+            // Prefer the exact source line the user clicked; otherwise scroll
+            // to the first highlighted match.
+            if (targetLine && targetLine > 0) {
+                this.scrollPreviewToSourceLine(targetLine);
+                // The clicked occurrence is not necessarily the first match in
+                // the note, so mark the highlight nearest the viewport as
+                // active instead of always using index 0.
+                const container = this._domCache.previewContainer;
+                const marks = preview.querySelectorAll('mark.search-highlight');
+                if (container && marks.length > 0) {
+                    const anchor = container.scrollTop + 100;
+                    let best = marks[0];
+                    let bestDist = Math.abs(best.offsetTop - anchor);
+                    marks.forEach(mark => {
+                        const dist = Math.abs(mark.offsetTop - anchor);
+                        if (dist < bestDist) {
+                            bestDist = dist;
+                            best = mark;
+                        }
+                    });
+                    marks.forEach(mark => {
+                        mark.classList.toggle('active-match', mark === best);
+                    });
+                    this.currentMatchIndex = Array.prototype.indexOf.call(marks, best);
+                }
+            } else if (this.totalMatches > 0) {
                 this.scrollToMatch(0);
             }
+        },
+
+        // Scroll the textarea to a 1-based source line.
+        scrollEditorToLine(line) {
+            const editor = this._domCache.editor || document.getElementById('editor');
+            if (!editor || !line || line < 1) return;
+            const lineHeight = parseFloat(getComputedStyle(editor).lineHeight) || 20;
+            editor.scrollTop = Math.max(0, (line - 5) * lineHeight);
+        },
+
+        // Scroll the preview to the nearest block carrying a data-source-line
+        // anchor (the markdown renderer stamps these during scroll-sync setup).
+        scrollPreviewToSourceLine(line) {
+            const preview = document.querySelector('.markdown-preview');
+            const previewContainer = this._domCache.previewContainer;
+            if (!preview || !previewContainer || !line) return;
+
+            const anchors = preview.querySelectorAll('[data-source-line]');
+            let best = null;
+            let bestLine = -1;
+            for (const el of anchors) {
+                const anchorLine = parseInt(el.getAttribute('data-source-line'), 10);
+                if (!Number.isFinite(anchorLine)) continue;
+                if (anchorLine === line) {
+                    best = el;
+                    bestLine = anchorLine;
+                    break;
+                }
+                if (anchorLine <= line && anchorLine > bestLine) {
+                    best = el;
+                    bestLine = anchorLine;
+                }
+            }
+
+            if (!best) {
+                const firstMatch = preview.querySelector('mark.search-highlight');
+                if (firstMatch) {
+                    previewContainer.scrollTop = Math.max(0, firstMatch.offsetTop - 100);
+                }
+                return;
+            }
+            previewContainer.scrollTop = Math.max(0, best.offsetTop - 100);
         },
         
         // Navigate to next search match
@@ -4954,6 +5492,9 @@ function noteApp() {
 
                 if (response.ok) {
                     const result = await response.json();
+                    // A hover preview for this note would otherwise show the
+                    // version from before this save for up to its cache TTL.
+                    if (this._linkPreviewCache) this._linkPreviewCache.delete(notePath);
                     if (notePath === this.currentNote) {
                         this.noteBaseHash = result.hash || null;
                         // Refresh TOC and metadata panels from the server-parsed save response
@@ -5185,6 +5726,38 @@ function noteApp() {
         async searchNotes() {
             await this.applyFilters();
         },
+
+        // Collapsible search result groups. Keeping the state in a plain object
+        // (path -> bool) lets the sidebar show only note headers until the user
+        // asks for the individual occurrences.
+        toggleSearchResult(path) {
+            this.expandedSearchResults = {
+                ...this.expandedSearchResults,
+                [path]: !this.expandedSearchResults[path],
+            };
+        },
+
+        isSearchResultExpanded(path) {
+            return !!this.expandedSearchResults[path];
+        },
+
+        expandAllSearchResults() {
+            const expanded = {};
+            for (const result of this.searchResults) {
+                expanded[result.path] = true;
+            }
+            this.expandedSearchResults = expanded;
+        },
+
+        collapseAllSearchResults() {
+            this.expandedSearchResults = {};
+        },
+
+        // Open a note at the exact occurrence the user clicked.
+        openSearchMatch(path, match, query) {
+            const line = match && match.line_number ? match.line_number : null;
+            this.openItem(path, 'note', query, line);
+        },
         
         // Trigger MathJax typesetting after DOM update.
         // MathJax's combined build (~1 MB) is fetched on the first note that
@@ -5310,7 +5883,7 @@ function noteApp() {
                         // Create a container for the rendered diagram
                         const container = document.createElement('div');
                         container.className = 'mermaid-rendered';
-                        container.style.cssText = 'background-color: transparent; padding: 20px; text-align: center; overflow-x: auto;';
+                        container.style.cssText = 'background-color: transparent; padding: 20px 0; width: 100%; text-align: center; overflow-x: auto;';
                         container.innerHTML = svg;
                         // Store original code for theme re-rendering
                         container.dataset.originalCode = code;

@@ -118,6 +118,11 @@ type SearchResponse struct {
 	Pagination *PaginationInfo       `json:"pagination,omitempty"`
 }
 
+// maxSearchMatchesPerNote bounds the snippets returned for one note. The total
+// occurrence count is still reported so the sidebar can show "N of M" when a
+// note contains more matches than this.
+const maxSearchMatchesPerNote = 100
+
 func (h *TagsSearchHandler) SearchNotes(w http.ResponseWriter, r *http.Request) {
 	if !h.cfg.Search.Enabled {
 		RespondError(w, http.StatusForbidden, "Search is disabled")
@@ -172,16 +177,17 @@ func (h *TagsSearchHandler) SearchNotes(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 
-		spans := search.FoldedMatchSpans(content, foldedQuery, 3)
-		if len(spans) == 0 {
+		spans, totalMatches := search.FoldedMatchSpansWithCount(content, foldedQuery, maxSearchMatchesPerNote)
+		if totalMatches == 0 {
 			continue
 		}
 
 		var matches []search.SearchMatch
 		for _, sp := range spans {
-			lineNum, snippet := search.ExtractSnippet(content, sp)
+			lineNum, column, snippet := search.ExtractSnippet(content, sp)
 			matches = append(matches, search.SearchMatch{
 				LineNumber: lineNum,
+				Column:     column,
 				Context:    snippet,
 			})
 		}
@@ -192,10 +198,11 @@ func (h *TagsSearchHandler) SearchNotes(w http.ResponseWriter, r *http.Request) 
 		}
 
 		results = append(results, search.SearchResult{
-			Name:    n.Name,
-			Path:    n.Path,
-			Folder:  folder,
-			Matches: matches,
+			Name:         n.Name,
+			Path:         n.Path,
+			Folder:       folder,
+			Matches:      matches,
+			TotalMatches: totalMatches,
 		})
 	}
 

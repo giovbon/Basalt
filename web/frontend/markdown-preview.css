@@ -385,9 +385,16 @@
     margin: 0 0.2rem;
 }
 
-/* Mermaid diagram styling - minimal, let Mermaid handle its own rendering */
+/* Mermaid diagram styling - minimal, let Mermaid handle its own rendering.
+   Diagrams are meant to use the full width of the preview pane: Mermaid
+   writes an inline max-width for the diagram's natural size, so it needs
+   !important to stay responsive instead of shrinking to that width. */
+.markdown-preview .mermaid-rendered {
+    width: 100%;
+}
 .markdown-preview .mermaid-rendered svg {
-    max-width: 100%;
+    width: 100% !important;
+    max-width: 100% !important;
     height: auto;
 }
 

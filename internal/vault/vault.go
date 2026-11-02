@@ -676,6 +676,14 @@ func (v *Vault) GetAttachmentDir(notePath string) string {
 	if dir == "." || dir == "" {
 		return filepath.Join(v.notesDir, "_attachments")
 	}
+	// A note that already lives inside an _attachments tree (for example one
+	// opened from the media viewer, or a synthetic upload path built from a
+	// browsed attachment folder) must not get another _attachments level.
+	for _, segment := range strings.Split(dir, "/") {
+		if segment == "_attachments" {
+			return filepath.Join(v.notesDir, dir)
+		}
+	}
 	return filepath.Join(v.notesDir, dir, "_attachments")
 }
 
@@ -897,8 +905,16 @@ func extractBacklinkReferences(
 
 		// Wikilinks
 		for _, match := range wikilinkRe.FindAllStringSubmatchIndex(line, -1) {
-			rawTarget := line[match[2]:match[3]]
-			targetLower := strings.ToLower(strings.TrimSpace(rawTarget))
+			rawTarget := strings.TrimSpace(line[match[2]:match[3]])
+			// [[Note#Heading]] is a link to Note; the heading is an anchor,
+			// not part of the target path.
+			if idx := strings.Index(rawTarget, "#"); idx != -1 {
+				rawTarget = strings.TrimSpace(rawTarget[:idx])
+			}
+			if rawTarget == "" {
+				continue
+			}
+			targetLower := strings.ToLower(rawTarget)
 			targetNoExt := strings.TrimSuffix(targetLower, ".md")
 
 			_, in1 := wikilinkRefs[targetLower]
@@ -1022,6 +1038,11 @@ func NewLinkResolver(notes []string) *LinkResolver {
 
 func (r *LinkResolver) ResolveWikilink(target string, sourceFolder string) string {
 	target = strings.TrimSpace(target)
+	// [[Note#Heading]] points at Note; the anchor only matters when the note
+	// is opened, not when resolving the edge/backlink target.
+	if idx := strings.Index(target, "#"); idx != -1 {
+		target = strings.TrimSpace(target[:idx])
+	}
 	if target == "" {
 		return ""
 	}

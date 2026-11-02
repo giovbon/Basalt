@@ -253,7 +253,12 @@
     "result_singular": "resultado",
     "result_plural": "resultados",
     "no_results": "Nenhuma nota contém \"{{query}}\"",
-    "searching": "Buscando por \"{{query}}\"..."
+    "searching": "Buscando por \"{{query}}\"...",
+    "expand_all": "Expandir todas as ocorrências",
+    "collapse_all": "Recolher todas as ocorrências",
+    "open_at_line": "Abrir na linha {{line}}, coluna {{column}}",
+    "open_note": "Abrir nota no primeiro resultado",
+    "showing_limited": "Mostrando {{shown}} de {{total}} ocorrências"
   },
   "theme": {
     "title": "Tema"

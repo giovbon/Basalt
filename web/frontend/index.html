@@ -202,6 +202,61 @@
             background-color: var(--accent-primary);
             color: white;
         }
+
+        /* Sidebar search result groups: one collapsible group per note, with
+           line/column-level occurrences inside. Custom CSS keeps the layout
+           independent of Tailwind's compiled utility set. */
+        .search-result-group {
+            border: 1px solid var(--border-primary);
+            border-radius: 6px;
+            overflow: hidden;
+            margin-bottom: 4px;
+        }
+        .search-result-header {
+            width: 100%;
+            transition: background-color 0.15s ease;
+        }
+        .search-result-header:hover {
+            background-color: var(--bg-hover);
+        }
+        .search-result-header.active {
+            background-color: var(--accent-light);
+            color: var(--accent-primary);
+        }
+        .search-result-chevron {
+            transition: transform 0.15s ease;
+        }
+        .search-result-chevron.expanded {
+            transform: rotate(90deg);
+        }
+        .search-result-count {
+            font-size: 10px;
+            line-height: 16px;
+            min-width: 16px;
+            text-align: center;
+            background-color: var(--bg-tertiary);
+            color: var(--text-secondary);
+            border-radius: 999px;
+            padding: 0 5px;
+        }
+        .search-match-row {
+            width: 100%;
+            text-align: left;
+            border-top: 1px solid var(--border-primary);
+            transition: background-color 0.15s ease;
+        }
+        .search-match-row:hover {
+            background-color: var(--bg-hover);
+        }
+        .search-match-line {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            font-size: 10px;
+            line-height: 16px;
+            background-color: var(--bg-tertiary);
+            color: var(--text-secondary);
+            border-radius: 3px;
+            padding: 0 4px;
+        }
         
         /* Note Properties Panel */
         .note-properties {
@@ -1120,6 +1175,119 @@
             background-color: var(--accent-primary);
             color: #fff;
         }
+        /* Hover card for internal links in the note preview. The card is
+           appended to <body>, so it needs its own themed surface instead of
+           inheriting the preview pane's background. */
+        .link-preview-card {
+            position: fixed;
+            z-index: 120;
+            width: min(480px, calc(100vw - 24px));
+            max-height: min(60vh, 520px);
+            overflow: auto;
+            background-color: var(--bg-secondary);
+            color: var(--text-primary);
+            border: 1px solid var(--border-primary);
+            border-radius: 10px;
+            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+            opacity: 0;
+            transform: translateY(4px);
+            transition: opacity 0.12s ease, transform 0.12s ease;
+            pointer-events: none;
+        }
+        .link-preview-card.is-visible {
+            opacity: 1;
+            transform: translateY(0);
+            pointer-events: auto;
+        }
+        .link-preview-header {
+            position: sticky;
+            top: 0;
+            z-index: 1;
+            display: flex;
+            align-items: baseline;
+            gap: 0.5rem;
+            padding: 0.6rem 0.9rem;
+            background-color: var(--bg-secondary);
+            border-bottom: 1px solid var(--border-primary);
+        }
+        .link-preview-title {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .link-preview-anchor {
+            flex-shrink: 0;
+            max-width: 45%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-size: 0.75rem;
+            color: var(--text-tertiary);
+        }
+        .link-preview-body {
+            padding: 0.75rem 0.9rem 1rem;
+            font-size: 0.8125rem;
+            line-height: 1.55;
+        }
+        .link-preview-body > :first-child { margin-top: 0; }
+        .link-preview-body > :last-child { margin-bottom: 0; }
+        .link-preview-body h1,
+        .link-preview-body h2,
+        .link-preview-body h3,
+        .link-preview-body h4,
+        .link-preview-body h5,
+        .link-preview-body h6 {
+            margin: 0.75rem 0 0.35rem;
+            padding: 0;
+            border: 0;
+            font-size: 1rem;
+            font-weight: 600;
+            line-height: 1.3;
+        }
+        .link-preview-body h1 { font-size: 1.15rem; }
+        .link-preview-body h2 { font-size: 1.05rem; }
+        .link-preview-body p,
+        .link-preview-body ul,
+        .link-preview-body ol,
+        .link-preview-body blockquote,
+        .link-preview-body pre,
+        .link-preview-body table {
+            margin: 0.4rem 0;
+        }
+        .link-preview-body ul,
+        .link-preview-body ol {
+            padding-left: 1.25rem;
+        }
+        .link-preview-body pre {
+            padding: 0.5rem 0.65rem;
+            font-size: 0.75rem;
+            overflow-x: auto;
+        }
+        .link-preview-body code {
+            font-size: 0.75rem;
+        }
+        .link-preview-body a {
+            color: var(--accent-primary);
+            text-decoration: underline;
+            pointer-events: none;
+        }
+        .link-preview-body img {
+            display: none;
+        }
+        .link-preview-loading,
+        .link-preview-error,
+        .link-preview-empty {
+            padding: 0.75rem 0.9rem 1rem;
+            font-size: 0.8125rem;
+            color: var(--text-tertiary);
+        }
+        .link-preview-error {
+            color: var(--error, #dc2626);
+        }
     </style>
 
     <!-- Pre-compiled Tailwind utilities. Keep this as the LAST stylesheet in
@@ -1643,7 +1811,7 @@
                             </svg>
                             <button
                                 x-show="searchQuery.length > 0"
-                                @click="searchQuery = ''; searchResults = []; currentSearchHighlight = ''; clearSearchHighlights();"
+                                @click="searchQuery = ''; searchResults = []; expandedSearchResults = {}; currentSearchHighlight = ''; clearSearchHighlights();"
                                 class="absolute right-1.5 top-1.5 w-4 h-4 flex items-center justify-center rounded-full hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
                                 style="color: var(--text-tertiary);"
                                 :title="t('sidebar.clear_search')"
@@ -1676,22 +1844,103 @@
                     <div class="flex-1 overflow-y-auto custom-scrollbar">
                         <template x-if="isSearchable() && searchResults.length > 0">
                             <div class="p-2">
-                                <div class="text-xs px-2 py-1 mb-1" style="color: var(--text-tertiary);">
+                                <div class="flex items-center justify-between text-xs px-2 py-1 mb-1" style="color: var(--text-tertiary);">
                                     <span x-text="searchResults.length + ' ' + t(searchResults.length === 1 ? 'search.result_singular' : 'search.result_plural')"></span>
+                                    <div class="flex items-center gap-1">
+                                        <button
+                                            type="button"
+                                            @click="expandAllSearchResults()"
+                                            class="p-1.5 rounded"
+                                            style="background-color: var(--bg-tertiary); color: var(--text-secondary);"
+                                            :title="t('search.expand_all')"
+                                            :aria-label="t('search.expand_all')"
+                                        >
+                                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                                            </svg>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            @click="collapseAllSearchResults()"
+                                            class="p-1.5 rounded"
+                                            style="background-color: var(--bg-tertiary); color: var(--text-secondary);"
+                                            :title="t('search.collapse_all')"
+                                            :aria-label="t('search.collapse_all')"
+                                        >
+                                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"></path>
+                                            </svg>
+                                        </button>
+                                    </div>
                                 </div>
                                 <template x-for="note in searchResults" :key="note.path">
-                                    <div 
-                                        @click="openItem(note.path, note.type, searchQuery)"
-                                        class="hover-accent px-2 py-1.5 text-sm cursor-pointer mb-1"
-                                        :class="{'active': currentNote === note.path}"
-                                        :style="currentNote === note.path ? 'background-color: var(--accent-light); color: var(--accent-primary);' : 'color: var(--text-primary);'"
-                                        :title="note.path"
-                                    >
-                                        <div class="font-medium truncate" x-text="note.name"></div>
-                                        <div class="text-xs truncate" style="color: var(--text-tertiary);" x-html="(note.matches && note.matches.length > 0) ? note.matches[0].context : (note.folder || 'Root')"></div>
-                    </div>
-                </template>
-            </div>
+                                    <div class="search-result-group">
+                                        <!-- Note header: chevron toggles the occurrence list;
+                                             the trailing button opens the note at its first match. -->
+                                        <div
+                                            class="search-result-header flex items-center gap-1 px-2 py-1.5"
+                                            :class="{'active': currentNote === note.path}"
+                                        >
+                                            <button
+                                                type="button"
+                                                @click="toggleSearchResult(note.path)"
+                                                class="flex items-start gap-1.5 min-w-0 flex-1 text-left"
+                                                :title="note.path"
+                                                :aria-expanded="isSearchResultExpanded(note.path) ? 'true' : 'false'"
+                                            >
+                                                <svg
+                                                    class="w-3 h-3 shrink-0 mt-1 search-result-chevron"
+                                                    :class="{'expanded': isSearchResultExpanded(note.path)}"
+                                                    fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                                                >
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                                                </svg>
+                                                <div class="min-w-0 flex-1">
+                                                    <div class="flex items-center gap-1">
+                                                        <span class="font-medium truncate text-sm" x-text="note.name"></span>
+                                                        <span class="search-result-count shrink-0" x-text="note.total_matches || (note.matches ? note.matches.length : 0)"></span>
+                                                    </div>
+                                                    <div class="text-[10px] truncate" style="color: var(--text-tertiary);" x-text="note.folder || '/'"></div>
+                                                </div>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                @click="openSearchMatch(note.path, note.matches && note.matches[0], searchQuery)"
+                                                class="p-1.5 rounded shrink-0"
+                                                style="color: var(--text-tertiary);"
+                                                :title="t('search.open_note')"
+                                                :aria-label="t('search.open_note')"
+                                            >
+                                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 17L17 7M17 7H9M17 7v8"></path>
+                                                </svg>
+                                            </button>
+                                        </div>
+
+                                        <!-- Occurrences: one row per match, with line:column and a snippet. -->
+                                        <div x-show="isSearchResultExpanded(note.path)" x-cloak>
+                                            <template x-for="(match, matchIndex) in (note.matches || [])" :key="note.path + ':' + matchIndex">
+                                                <button
+                                                    type="button"
+                                                    @click="openSearchMatch(note.path, match, searchQuery)"
+                                                    class="search-match-row px-2 py-1.5"
+                                                    :title="t('search.open_at_line', { line: match.line_number, column: match.column })"
+                                                >
+                                                    <div class="flex items-center gap-1 mb-1">
+                                                        <span class="search-match-line" x-text="'L' + match.line_number + (match.column ? ':' + match.column : '')"></span>
+                                                    </div>
+                                                    <div class="text-xs break-words leading-snug" style="color: var(--text-secondary);" x-html="match.context"></div>
+                                                </button>
+                                            </template>
+                                            <template x-if="(note.total_matches || 0) > (note.matches ? note.matches.length : 0)">
+                                                <div class="px-2 py-1 text-[10px] text-center" style="color: var(--text-tertiary);">
+                                                    <span x-text="t('search.showing_limited', { shown: note.matches.length, total: note.total_matches })"></span>
+                                                </div>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
                         </template>
                         <template x-if="isSearchable() && isSearching">
                             <div class="p-6 text-center">
@@ -2767,7 +3016,6 @@
                                     @keydown.enter="handleEditorEnterKey($event)"
                                     @keydown.tab="handleTabKey($event)"
                                     @click="wlDetectToken()"
-                                    @blur="wlClose()"
                                     @dblclick="trimSelectionTrailingSpace($event)"
                                     @drop="onEditorDrop($event)"
                                     @dragover.prevent="onEditorDragOver($event)"
