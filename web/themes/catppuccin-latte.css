@@ -1,0 +1,39 @@
+/* Catppuccin Latte Theme - Light Soft Pastel Palette */
+/* @theme-type: light */
+
+:root[data-theme="catppuccin-latte"] {
+    /* Background colors */
+    --bg-primary: #eff1f5;
+    --bg-secondary: #e6e9ef;
+    --bg-tertiary: #ccd0da;
+    --bg-hover: #bcc0cc;
+    --bg-active: #acb0be;
+    
+    /* Text colors */
+    --text-primary: #4c4f69;
+    --text-secondary: #5c5f77;
+    --text-tertiary: #6c6f85;
+    
+    /* Border colors */
+    --border-primary: #bcc0cc;
+    --border-secondary: #ccd0da;
+    
+    /* Accent colors */
+    --accent-primary: #8839ef;
+    --accent-hover: #7287fd;
+    --accent-light: rgba(136, 57, 239, 0.12);
+    
+    /* Status colors */
+    --success: #40a02b;
+    --error: #d20f39;
+    --warning: #df8e1d;
+
+    /* Bold + italic */
+    --syntax-bold: #df8e1d;
+    --syntax-italic: #1e66f5;
+
+    /* Shadows */
+    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.15);
+}

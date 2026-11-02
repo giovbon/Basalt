@@ -5,7 +5,7 @@ set -e
 cd "$(dirname "$0")"
 
 echo "=========================================="
-echo "         Iniciando NoteDiscovery (Go)     "
+echo "         Iniciando Basalt (Go)            "
 echo "=========================================="
 
 # Garante que Go está instalado
@@ -53,8 +53,8 @@ free_port "$PORT"
 # Cria o diretório de dados padrão se não existir
 mkdir -p data
 
-echo "Compilando NoteDiscovery..."
-go build -o notediscovery ./cmd/notediscovery
+echo "Compilando Basalt..."
+go build -o basalt ./cmd/basalt
 
 echo "Servidor pronto!"
 echo "Acesse no navegador: http://localhost:${PORT}"
@@ -62,4 +62,4 @@ echo "Pressione Ctrl+C para encerrar."
 echo "=========================================="
 echo ""
 
-exec ./notediscovery
+exec ./basalt

@@ -1,0 +1,39 @@
+/* Synthwave '84 Theme - Neon Retro 80s */
+/* @theme-type: dark */
+
+:root[data-theme="synthwave-84"] {
+    /* Background colors */
+    --bg-primary: #262335;
+    --bg-secondary: #1a1528;
+    --bg-tertiary: #34294f;
+    --bg-hover: #34294f;
+    --bg-active: #493566;
+    
+    /* Text colors */
+    --text-primary: #f0eff1;
+    --text-secondary: #b6b1c8;
+    --text-tertiary: #72678c;
+    
+    /* Border colors */
+    --border-primary: #493566;
+    --border-secondary: #281d3f;
+    
+    /* Accent colors */
+    --accent-primary: #ff7edb;
+    --accent-hover: #fe4450;
+    --accent-light: rgba(255, 126, 219, 0.18);
+    
+    /* Status colors */
+    --success: #72f1b8;
+    --error: #fe4450;
+    --warning: #fede5d;
+
+    /* Bold + italic */
+    --syntax-bold: #fede5d;
+    --syntax-italic: #36f9f6;
+
+    /* Shadows */
+    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.7);
+}

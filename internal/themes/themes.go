@@ -29,6 +29,10 @@ var themeIcons = map[string]string{
 	"matcha-light":       "🍵",
 	"hacker":             "🖥️",
 	"ubuntu":             "🟠",
+	"catppuccin-latte":   "🧋",
+	"tokyo-night":        "⛩️",
+	"one-dark-pro":       "⚫",
+	"synthwave-84":       "🕹️",
 }
 
 // titleCase converts "matcha light" to "Matcha Light"
