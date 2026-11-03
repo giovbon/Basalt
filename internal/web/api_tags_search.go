@@ -172,6 +172,18 @@ func (h *TagsSearchHandler) SearchNotes(w http.ResponseWriter, r *http.Request) 
 		if n.Type != "note" {
 			continue
 		}
+
+		// Cheap reject first: the accent-folded text is cached per note in the
+		// index, so a query matching nothing never touches note content (and
+		// never reads a single file when the content cache is cold or full).
+		folded, err := h.vault.GetFoldedContent(n.Path)
+		if err != nil {
+			continue
+		}
+		if !strings.Contains(folded, foldedQuery) {
+			continue
+		}
+
 		content, err := h.vault.GetNoteContent(n.Path)
 		if err != nil {
 			continue

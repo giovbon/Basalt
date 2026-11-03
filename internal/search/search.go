@@ -29,6 +29,79 @@ type Span struct {
 	End   int
 }
 
+// isASCIIContent reports whether every byte of s is a 7-bit ASCII byte. It is
+// the same predicate FoldedMatchSpansWithCount uses to pick its fast path, so
+// FoldContent and the span extractor always fold text the same way.
+func isASCIIContent(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= unicode.MaxASCII {
+			return false
+		}
+	}
+	return true
+}
+
+// foldNonASCII folds content (lowercase + strip combining marks), handling
+// maximal ASCII runs in bulk: NFD decomposition and mark stripping are no-ops
+// on ASCII and strings.ToLower folds ASCII byte-wise, so folding a run at once
+// is byte-identical to folding each of its runes — only the accented runes pay
+// the full per-rune Fold pipeline.
+//
+// When origins is non-nil it receives one entry per byte of the folded output
+// holding the content byte offset of the rune that byte came from — the
+// mapping FoldedMatchSpansWithCount needs to report spans in the original
+// content.
+//
+// FoldContent passes nil and FoldedMatchSpansWithCount passes a slice, so both
+// callers are guaranteed to search in byte-identical folded text.
+func foldNonASCII(content string, origins *[]int) string {
+	var foldedBuilder strings.Builder
+	foldedBuilder.Grow(len(content))
+	i := 0
+	for i < len(content) {
+		if content[i] < utf8.RuneSelf {
+			// ASCII run: fold it in one ToLower call. Each ASCII byte is one
+			// rune and ToLower preserves the length, so origins stays aligned.
+			j := i + 1
+			for j < len(content) && content[j] < utf8.RuneSelf {
+				j++
+			}
+			run := strings.ToLower(content[i:j])
+			foldedBuilder.WriteString(run)
+			if origins != nil {
+				for k := 0; k < len(run); k++ {
+					*origins = append(*origins, i+k)
+				}
+			}
+			i = j
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(content[i:])
+		f := Fold(string(r))
+		foldedBuilder.WriteString(f)
+		if origins != nil {
+			for k := 0; k < len(f); k++ {
+				*origins = append(*origins, i)
+			}
+		}
+		i += size
+	}
+	return foldedBuilder.String()
+}
+
+// FoldContent returns the accent-folded, lowercased form of content: the exact
+// text FoldedMatchSpansWithCount matches the folded query against. Callers
+// cache it so a search only folds each note once instead of once per query.
+func FoldContent(content string) string {
+	if content == "" {
+		return ""
+	}
+	if !isASCIIContent(content) {
+		return foldNonASCII(content, nil)
+	}
+	return strings.ToLower(content)
+}
+
 // FoldedMatchSpans finds foldedQuery in content and returns up to limit (start, end)
 // byte spans in the original content. A non-positive limit means "no limit".
 func FoldedMatchSpans(content string, foldedQuery string, limit int) []Span {
@@ -45,15 +118,7 @@ func FoldedMatchSpansWithCount(content string, foldedQuery string, limit int) ([
 		return nil, 0
 	}
 
-	isASCII := true
-	for i := 0; i < len(content); i++ {
-		if content[i] >= unicode.MaxASCII {
-			isASCII = false
-			break
-		}
-	}
-
-	if isASCII {
+	if isASCIIContent(content) {
 		folded := strings.ToLower(content)
 		var spans []Span
 		total := 0
@@ -72,27 +137,11 @@ func FoldedMatchSpansWithCount(content string, foldedQuery string, limit int) ([
 		return spans, total
 	}
 
-	// For Unicode content, track character origin
-	var foldedBuilder strings.Builder
+	// Fold with origins: folded byte -> content byte offset of its origin
+	// rune. That mapping alone is enough to report spans, so no per-note rune
+	// table has to be built (it used to cost two slices the size of content).
 	var origins []int
-
-	// Walk runes of content
-	runeOffsets := make([]int, 0, len(content))
-	runesList := make([]rune, 0, len(content))
-	for offset, r := range content {
-		runeOffsets = append(runeOffsets, offset)
-		runesList = append(runesList, r)
-	}
-	runeCount := len(runesList)
-
-	for i, r := range runesList {
-		f := Fold(string(r))
-		foldedBuilder.WriteString(f)
-		for j := 0; j < len(f); j++ {
-			origins = append(origins, i)
-		}
-	}
-	folded := foldedBuilder.String()
+	folded := foldNonASCII(content, &origins)
 
 	var spans []Span
 	total := 0
@@ -102,20 +151,17 @@ func FoldedMatchSpansWithCount(content string, foldedQuery string, limit int) ([
 		endPos := pos + len(foldedQuery)
 
 		if limit <= 0 || len(spans) < limit {
-			startRuneIdx := origins[pos]
-			endRuneIdx := origins[endPos-1] + 1
-
-			// Keep combining accents with preceding letter
-			for endRuneIdx < runeCount && unicode.Is(unicode.Mn, runesList[endRuneIdx]) {
-				endRuneIdx++
-			}
-
-			startByte := runeOffsets[startRuneIdx]
-			var endByte int
-			if endRuneIdx < runeCount {
-				endByte = runeOffsets[endRuneIdx]
-			} else {
-				endByte = len(content)
+			startByte := origins[pos]
+			// Step over the last matched rune, then keep any combining
+			// accents attached to it in the span.
+			_, size := utf8.DecodeRuneInString(content[origins[endPos-1]:])
+			endByte := origins[endPos-1] + size
+			for endByte < len(content) {
+				r, sz := utf8.DecodeRuneInString(content[endByte:])
+				if !unicode.Is(unicode.Mn, r) {
+					break
+				}
+				endByte += sz
 			}
 
 			spans = append(spans, Span{Start: startByte, End: endByte})

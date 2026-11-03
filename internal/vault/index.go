@@ -1,20 +1,41 @@
 package vault
 
 import (
+	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 // Content caching bounds. A single note larger than contentCacheMaxBytes is
 // still listed and searched (its content is read on demand), it is just not
-// kept in memory. contentCacheBudget caps the total bytes of note content the
-// index is willing to hold so a very large vault degrades to "tags only"
-// instead of ballooning the process.
-const (
-	contentCacheMaxBytes = 2 << 20  // 2 MiB per note
-	contentCacheBudget   = 64 << 20 // 64 MiB total
+// kept in memory. The *Budget caps the total bytes the index is willing to
+// hold for each payload; when a budget fills up the least recently used
+// payload is evicted (LRU) instead of the cache being disabled, so a large
+// vault degrades gradually rather than falling off a cliff.
+//
+// foldCacheBudget holds the accent-folded copy of note text used by search.
+// It is budgeted separately from content because search only needs the folded
+// text of *every* note, while snippets (and everything else) only need the
+// original content of the few notes that match.
+var (
+	contentCacheMaxBytes int64 = 2 << 20  // 2 MiB per note
+	contentCacheBudget   int64 = 64 << 20 // 64 MiB total
+	foldCacheMaxBytes    int64 = 2 << 20  // 2 MiB per note
+	foldCacheBudget      int64 = 64 << 20 // 64 MiB total
 )
+
+// LinkOcc is one link occurrence inside a note, captured when the note is
+// indexed (so backlinks and the graph never re-scan note text per request).
+// Target holds the raw link as written: for wikilinks the text after "#"
+// truncation, for markdown links the full destination (fragment included).
+type LinkOcc struct {
+	Target  string
+	Line    int
+	Type    string // "wikilink" or "markdown"
+	Context string // surrounding text window, exactly as backlinks showed it
+}
 
 // indexEntry mirrors the on-disk state of a single vault file. Entries are
 // only trusted while (mtime, size) still match the filesystem, so edits made
@@ -35,6 +56,20 @@ type indexEntry struct {
 	// CRLF-normalized content (notes only, subject to the bounds above).
 	content    string
 	hasContent bool
+
+	// Accent-folded lowercase copy of content, used by search (notes only).
+	folded    string
+	hasFolded bool
+
+	// Link occurrences extracted at index time (notes only). hasLinks tells
+	// "extracted, none found" apart from "never extracted".
+	wikiLinks []LinkOcc
+	mdLinks   []LinkOcc
+	hasLinks  bool
+
+	// Recency counters for the two eviction pools, in Index.tick units.
+	usedContent atomic.Int64
+	usedFold    atomic.Int64
 
 	// True for markdown notes; media entries carry no tags/content.
 	isNote bool
@@ -57,6 +92,12 @@ type Index struct {
 
 	// contentBytes is the total size of cached note contents.
 	contentBytes int64
+
+	// foldedBytes is the total size of cached folded texts.
+	foldedBytes int64
+
+	// tick is a monotonic counter used as the LRU clock.
+	tick atomic.Int64
 }
 
 func newIndex() *Index {
@@ -94,12 +135,13 @@ func (ix *Index) putNote(rel string, mtime time.Time, size int64, content string
 		name = name[:j]
 	}
 
+	wiki, md := extractOutLinks(content)
+
 	ix.mu.Lock()
 	defer ix.mu.Unlock()
 
-	old := ix.entries[rel]
-	if old != nil && old.hasContent {
-		ix.contentBytes -= int64(len(old.content))
+	if old := ix.entries[rel]; old != nil {
+		ix.releaseEntryLocked(old)
 	}
 
 	e := &indexEntry{
@@ -111,10 +153,23 @@ func (ix *Index) putNote(rel string, mtime time.Time, size int64, content string
 		tags:    tags,
 		isNote:  true,
 		content: content,
+		// Links are extracted once here (and on every content refresh) so
+		// backlinks/graph queries never have to re-parse note text.
+		wikiLinks: wiki,
+		mdLinks:   md,
+		hasLinks:  true,
 	}
-	if int64(len(content)) <= contentCacheMaxBytes && ix.contentBytes+int64(len(content)) <= contentCacheBudget {
-		e.hasContent = true
-		ix.contentBytes += int64(len(content))
+	e.usedContent.Store(ix.tick.Add(1))
+	e.usedFold.Store(ix.tick.Add(1))
+
+	if int64(len(content)) <= contentCacheMaxBytes {
+		ix.makeContentRoomLocked(int64(len(content)), rel)
+		if ix.contentBytes+int64(len(content)) <= contentCacheBudget {
+			e.hasContent = true
+			ix.contentBytes += int64(len(content))
+		} else {
+			e.content = ""
+		}
 	} else {
 		e.content = ""
 	}
@@ -126,8 +181,8 @@ func (ix *Index) putNote(rel string, mtime time.Time, size int64, content string
 func (ix *Index) putMedia(rel, name, folder, mediaType string, mtime time.Time, size int64) {
 	ix.mu.Lock()
 	defer ix.mu.Unlock()
-	if old, ok := ix.entries[rel]; ok && old.hasContent {
-		ix.contentBytes -= int64(len(old.content))
+	if old, ok := ix.entries[rel]; ok {
+		ix.releaseEntryLocked(old)
 	}
 	ix.entries[rel] = &indexEntry{
 		mtime:  mtime,
@@ -138,10 +193,91 @@ func (ix *Index) putMedia(rel, name, folder, mediaType string, mtime time.Time, 
 	}
 }
 
+// releaseEntryLocked drops both cached payloads of an entry and returns their
+// bytes to the budgets. Callers must hold ix.mu and must discard or fully
+// refresh the entry afterwards: its content and folded text are only valid for
+// the (mtime, size) they were read from.
+func (ix *Index) releaseEntryLocked(e *indexEntry) {
+	if e.hasContent {
+		ix.contentBytes -= int64(len(e.content))
+		e.hasContent = false
+		e.content = ""
+	}
+	if e.hasFolded {
+		ix.foldedBytes -= int64(len(e.folded))
+		e.hasFolded = false
+		e.folded = ""
+	}
+	e.hasLinks = false
+	e.wikiLinks = nil
+	e.mdLinks = nil
+}
+
+// makeContentRoomLocked evicts least-recently-used content (never excludeRel)
+// until need more bytes fit in contentCacheBudget. No-op when they already fit.
+func (ix *Index) makeContentRoomLocked(need int64, excludeRel string) {
+	ix.makeRoomLocked(&ix.contentBytes, contentCacheBudget, need, excludeRel,
+		func(e *indexEntry) bool { return e.hasContent },
+		func(e *indexEntry) int64 { return e.usedContent.Load() },
+		func(e *indexEntry) {
+			ix.contentBytes -= int64(len(e.content))
+			e.hasContent = false
+			e.content = ""
+		},
+	)
+}
+
+// makeFoldRoomLocked is makeContentRoomLocked for the folded-text pool.
+func (ix *Index) makeFoldRoomLocked(need int64, excludeRel string) {
+	ix.makeRoomLocked(&ix.foldedBytes, foldCacheBudget, need, excludeRel,
+		func(e *indexEntry) bool { return e.hasFolded },
+		func(e *indexEntry) int64 { return e.usedFold.Load() },
+		func(e *indexEntry) {
+			ix.foldedBytes -= int64(len(e.folded))
+			e.hasFolded = false
+			e.folded = ""
+		},
+	)
+}
+
+// makeRoomLocked frees bytes from pool until need more bytes fit budget,
+// dropping the least recently used payloads first. has reports whether an
+// entry still carries the payload and drop reclaims one entry's payload.
+func (ix *Index) makeRoomLocked(pool *int64, budget, need int64, excludeRel string, has func(*indexEntry) bool, recency func(*indexEntry) int64, drop func(*indexEntry)) {
+	if *pool+need <= budget {
+		return
+	}
+
+	type candidate struct {
+		rel   string
+		order int64
+	}
+	var cands []candidate
+	for rel, e := range ix.entries {
+		if rel == excludeRel || !has(e) {
+			continue
+		}
+		cands = append(cands, candidate{rel: rel, order: recency(e)})
+	}
+	sort.Slice(cands, func(i, j int) bool { return cands[i].order < cands[j].order })
+
+	for _, c := range cands {
+		if *pool+need <= budget {
+			return
+		}
+		if e, ok := ix.entries[c.rel]; ok && has(e) {
+			drop(e)
+		}
+	}
+}
+
 // cacheContent records note content read outside a scan (e.g. GetNoteContent)
 // so subsequent searches do not hit the disk again. Creates the entry when the
-// file was never scanned. No-op when the file grew past the per-note bound or
-// the total budget is exhausted.
+// file was never scanned. Because a refreshed entry makes the next scan skip
+// the file, tags and links are refreshed together with the bytes; only the
+// content payload itself is dropped when it grows past the per-note bound or
+// the budget cannot free enough room (LRU eviction), in which case the entry
+// still serves metadata and the content is read on demand.
 func (ix *Index) cacheContent(rel string, mtime time.Time, size int64, content string) {
 	ix.mu.Lock()
 	defer ix.mu.Unlock()
@@ -150,37 +286,51 @@ func (ix *Index) cacheContent(rel string, mtime time.Time, size int64, content s
 	if ok && !e.isNote {
 		return
 	}
-	if ok && e.hasContent {
-		if e.matches(mtime, size) {
-			return
-		}
-		// Stale entry (external edit): drop the old content before refreshing.
-		ix.contentBytes -= int64(len(e.content))
-		e.hasContent = false
-		e.content = ""
-	}
-	if int64(len(content)) > contentCacheMaxBytes || ix.contentBytes+int64(len(content)) > contentCacheBudget {
+	stale := ok && !e.matches(mtime, size)
+	if ok && e.hasContent && !stale {
 		return
 	}
+
+	name := rel
+	folder := ""
+	if i := strings.LastIndex(rel, "/"); i >= 0 {
+		name = rel[i+1:]
+		folder = rel[:i]
+	}
+	if j := strings.LastIndex(name, "."); j > 0 {
+		name = name[:j]
+	}
+
 	if !ok {
-		name := rel
-		folder := ""
-		if i := strings.LastIndex(rel, "/"); i >= 0 {
-			name = rel[i+1:]
-			folder = rel[:i]
-		}
-		if j := strings.LastIndex(name, "."); j > 0 {
-			name = name[:j]
-		}
 		e = &indexEntry{mtime: mtime, size: size, name: name, folder: folder, typ: "note", isNote: true}
 		ix.entries[rel] = e
 	} else {
+		if stale {
+			// External edit: cached content/folded text belong to old bytes.
+			ix.releaseEntryLocked(e)
+		}
 		e.mtime = mtime
 		e.size = size
+		e.name = name
+		e.folder = folder
+	}
+	if !e.hasLinks {
+		e.tags = ParseTags(content)
+		e.wikiLinks, e.mdLinks = extractOutLinks(content)
+		e.hasLinks = true
+	}
+
+	if int64(len(content)) > contentCacheMaxBytes {
+		return
+	}
+	ix.makeContentRoomLocked(int64(len(content)), rel)
+	if ix.contentBytes+int64(len(content)) > contentCacheBudget {
+		return
 	}
 	e.content = content
 	e.hasContent = true
 	ix.contentBytes += int64(len(content))
+	e.usedContent.Store(ix.tick.Add(1))
 }
 
 // cachedContent returns the cached content of rel when the entry still
@@ -192,7 +342,63 @@ func (ix *Index) cachedContent(rel string, mtime time.Time, size int64) (string,
 	if !ok || !e.matches(mtime, size) || !e.isNote || !e.hasContent {
 		return "", false
 	}
+	e.usedContent.Store(ix.tick.Add(1))
 	return e.content, true
+}
+
+// cachedFold returns the cached accent-folded text of rel when the entry
+// still matches the observed filesystem state.
+func (ix *Index) cachedFold(rel string, mtime time.Time, size int64) (string, bool) {
+	ix.mu.RLock()
+	defer ix.mu.RUnlock()
+	e, ok := ix.entries[rel]
+	if !ok || !e.matches(mtime, size) || !e.isNote || !e.hasFolded {
+		return "", false
+	}
+	e.usedFold.Store(ix.tick.Add(1))
+	return e.folded, true
+}
+
+// putFold caches the folded text of rel. It only attaches to an entry that
+// already exists and matches the observed file state: an entry created or
+// retimestamped without re-parsing tags/links would make the next scan trust
+// incomplete data, so callers must scan (or read) the note first.
+func (ix *Index) putFold(rel string, mtime time.Time, size int64, folded string) {
+	if folded == "" || int64(len(folded)) > foldCacheMaxBytes {
+		return
+	}
+	ix.mu.Lock()
+	defer ix.mu.Unlock()
+
+	e, ok := ix.entries[rel]
+	if !ok || !e.isNote || !e.matches(mtime, size) {
+		return
+	}
+	if e.hasFolded {
+		ix.foldedBytes -= int64(len(e.folded))
+		e.hasFolded = false
+		e.folded = ""
+	}
+	ix.makeFoldRoomLocked(int64(len(folded)), rel)
+	if ix.foldedBytes+int64(len(folded)) > foldCacheBudget {
+		return
+	}
+	e.folded = folded
+	e.hasFolded = true
+	ix.foldedBytes += int64(len(folded))
+	e.usedFold.Store(ix.tick.Add(1))
+}
+
+// links returns the link occurrences recorded for a note. The slices are
+// read-only and safe to share: entries are replaced, never mutated in place.
+func (ix *Index) links(rel string) (wiki, md []LinkOcc) {
+	ix.mu.RLock()
+	defer ix.mu.RUnlock()
+	e, ok := ix.entries[rel]
+	if !ok || !e.isNote || !e.hasLinks {
+		return nil, nil
+	}
+	return e.wikiLinks, e.mdLinks
 }
 
 // drop removes a single entry.
@@ -200,9 +406,7 @@ func (ix *Index) drop(rel string) {
 	ix.mu.Lock()
 	defer ix.mu.Unlock()
 	if e, ok := ix.entries[rel]; ok {
-		if e.hasContent {
-			ix.contentBytes -= int64(len(e.content))
-		}
+		ix.releaseEntryLocked(e)
 		delete(ix.entries, rel)
 	}
 }
@@ -214,9 +418,7 @@ func (ix *Index) dropPrefix(prefix string) {
 	defer ix.mu.Unlock()
 	for k, e := range ix.entries {
 		if prefix == "" || k == prefix || (len(k) > len(prefix) && k[:len(prefix)] == prefix && k[len(prefix)] == '/') {
-			if e.hasContent {
-				ix.contentBytes -= int64(len(e.content))
-			}
+			ix.releaseEntryLocked(e)
 			delete(ix.entries, k)
 		}
 	}
@@ -229,9 +431,7 @@ func (ix *Index) prune(seen map[string]struct{}) {
 	defer ix.mu.Unlock()
 	for k, e := range ix.entries {
 		if _, ok := seen[k]; !ok {
-			if e.hasContent {
-				ix.contentBytes -= int64(len(e.content))
-			}
+			ix.releaseEntryLocked(e)
 			delete(ix.entries, k)
 		}
 	}

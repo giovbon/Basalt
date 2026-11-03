@@ -15,6 +15,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"notediscovery/internal/search"
 )
 
 var (
@@ -78,15 +80,17 @@ type GraphData struct {
 }
 
 type Vault struct {
-	notesDir string
-	mu       sync.RWMutex
-	idx      *Index
+	notesDir  string
+	mu        sync.RWMutex
+	idx       *Index
+	scanCache *scanCache
 }
 
 func New(notesDir string) *Vault {
 	return &Vault{
-		notesDir: filepath.Clean(notesDir),
-		idx:      newIndex(),
+		notesDir:  filepath.Clean(notesDir),
+		idx:       newIndex(),
+		scanCache: &scanCache{},
 	}
 }
 
@@ -385,6 +389,42 @@ func (v *Vault) GetNoteContent(notePath string) (string, error) {
 	return content, nil
 }
 
+// GetFoldedContent returns the accent-folded, lowercased text that search
+// matches against. The fold is computed once per note version and kept in the
+// index (bounded by foldCacheBudget and invalidated together with the entry),
+// so a query over a large vault folds each note exactly once instead of once
+// per keystroke.
+func (v *Vault) GetFoldedContent(notePath string) (string, error) {
+	v.mu.RLock()
+	fullPath := v.FullPath(notePath)
+	if !v.ValidatePathSecurity(fullPath) {
+		v.mu.RUnlock()
+		return "", os.ErrNotExist
+	}
+	// The fold is keyed by the stat taken *before* the read below: an edit in
+	// between can then only cause a redundant refold later, never a stale fold
+	// being served as valid.
+	info, err := os.Stat(fullPath)
+	if err != nil || info.IsDir() {
+		v.mu.RUnlock()
+		return "", os.ErrNotExist
+	}
+	rel := NormalizedRelPath(notePath)
+	folded, ok := v.idx.cachedFold(rel, info.ModTime(), info.Size())
+	v.mu.RUnlock()
+	if ok {
+		return folded, nil
+	}
+
+	content, err := v.GetNoteContent(notePath)
+	if err != nil {
+		return "", err
+	}
+	folded = search.FoldContent(content)
+	v.idx.putFold(rel, info.ModTime(), info.Size(), folded)
+	return folded, nil
+}
+
 func (v *Vault) SaveNote(notePath string, content string) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -404,9 +444,12 @@ func (v *Vault) SaveNote(notePath string, content string) error {
 		return err
 	}
 	// Refresh the index with what we just wrote so the next scan/search does
-	// not re-read the file.
+	// not re-read the file, and patch the cached listing in place so the next
+	// request does not have to walk the tree again.
 	if info, err := os.Stat(fullPath); err == nil {
-		v.idx.putNote(NormalizedRelPath(notePath), info.ModTime(), info.Size(), content)
+		rel := NormalizedRelPath(notePath)
+		tags := v.idx.putNote(rel, info.ModTime(), info.Size(), content)
+		v.scanCache.noteSaved(makeNoteRecord(rel, info, tags))
 	}
 	return nil
 }
@@ -422,7 +465,9 @@ func (v *Vault) DeleteNote(notePath string) bool {
 	if err := os.Remove(fullPath); err != nil {
 		return false
 	}
-	v.idx.drop(NormalizedRelPath(notePath))
+	rel := NormalizedRelPath(notePath)
+	v.idx.drop(rel)
+	v.scanCache.noteDeleted(rel)
 	return true
 }
 
@@ -460,6 +505,9 @@ func (v *Vault) MoveNote(oldPath, newPath string) (bool, string) {
 	}
 	v.idx.drop(NormalizedRelPath(oldPath))
 	v.idx.drop(NormalizedRelPath(newPath))
+	// Paths changed everywhere under the folder: cheaper to walk once than to
+	// rewrite the snapshot.
+	v.scanCache.invalidate()
 	return true, ""
 }
 
@@ -471,8 +519,11 @@ func (v *Vault) CreateFolder(folderPath string) bool {
 	if !v.ValidatePathSecurity(fullPath) {
 		return false
 	}
-	err := os.MkdirAll(fullPath, 0755)
-	return err == nil
+	if err := os.MkdirAll(fullPath, 0755); err != nil {
+		return false
+	}
+	v.scanCache.invalidate()
+	return true
 }
 
 func (v *Vault) MoveFolder(oldPath, newPath string) (bool, string) {
@@ -509,6 +560,7 @@ func (v *Vault) MoveFolder(oldPath, newPath string) (bool, string) {
 		return false, fmt.Sprintf("Failed to move folder: %s", err.Error())
 	}
 	v.idx.dropPrefix(NormalizedRelPath(oldPath))
+	v.scanCache.invalidate()
 	return true, ""
 }
 
@@ -528,6 +580,7 @@ func (v *Vault) DeleteFolder(folderPath string) bool {
 		return false
 	}
 	v.idx.dropPrefix(NormalizedRelPath(folderPath))
+	v.scanCache.invalidate()
 	return true
 }
 
@@ -710,20 +763,33 @@ func (v *Vault) SaveUploadedImage(notePath string, filename string, data []byte)
 		return "", err
 	}
 	rel, _ := filepath.Rel(v.notesDir, fullPath)
+	// New media file: the next listing must see it, so drop the snapshot.
+	v.scanCache.invalidate()
 	return strings.ReplaceAll(rel, "\\", "/"), nil
 }
 
 // ScanNotes traverses the vault skipping dot directories/files and symlinks.
 //
-// The walk always runs (new and deleted files must be noticed), but note
-// contents are only re-read for files whose (mtime, size) changed since the
-// last scan — see Index. Edits made outside the app are picked up by the next
-// scan; the only stale window is an external rewrite that preserves both mtime
-// and size (same-second, same-length edit), which the app's own writes never
-// produce because SaveNote refreshes the entry with the content it wrote.
+// The walk result itself is cached (see scanCache), so listings, tags, search,
+// stats and the graph do not re-walk the tree on every request: the snapshot
+// is served until an app write invalidates it or it expires after scanCacheTTL
+// — the expiry is what picks up edits made outside the app. When a walk does
+// run, note contents are only re-read for files whose (mtime, size) changed
+// since the last scan — see Index. The only stale window is an external
+// rewrite that preserves both mtime and size (same-second, same-length edit),
+// which the app's own writes never produce because SaveNote refreshes the
+// entry with the content it wrote.
+//
+// The stored snapshot always contains media records; includeMedia decides
+// whether this caller receives them, and the returned slices are copies the
+// caller may sort in place.
 func (v *Vault) ScanNotes(includeMedia bool) ([]NoteRecord, []string, error) {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
+
+	if cached, folders, ok := v.scanCache.get(includeMedia); ok {
+		return cached, folders, nil
+	}
 
 	var notes []NoteRecord = []NoteRecord{}
 	folderSet := make(map[string]struct{})
@@ -763,8 +829,7 @@ func (v *Vault) ScanNotes(includeMedia bool) ([]NoteRecord, []string, error) {
 
 		mediaType := GetMediaType(name)
 		isMarkdown := strings.ToLower(filepath.Ext(name)) == ".md"
-		shouldInclude := isMarkdown || (includeMedia && mediaType != "")
-		if !shouldInclude {
+		if !isMarkdown && mediaType == "" {
 			return nil
 		}
 
@@ -806,18 +871,16 @@ func (v *Vault) ScanNotes(includeMedia bool) ([]NoteRecord, []string, error) {
 		if _, ok := v.idx.get(relStr, info.ModTime(), info.Size()); !ok {
 			v.idx.putMedia(relStr, stem, parentFolder, mediaType, info.ModTime(), info.Size())
 		}
-		if includeMedia {
-			notes = append(notes, NoteRecord{
-				Name:     stem,
-				Path:     relStr,
-				Folder:   parentFolder,
-				Modified: FormatTime(info.ModTime()),
-				Size:     info.Size(),
-				Type:     mediaType,
-				Tags:     nil,
-				MTime:    float64(info.ModTime().UnixNano()) / 1e9,
-			})
-		}
+		notes = append(notes, NoteRecord{
+			Name:     stem,
+			Path:     relStr,
+			Folder:   parentFolder,
+			Modified: FormatTime(info.ModTime()),
+			Size:     info.Size(),
+			Type:     mediaType,
+			Tags:     nil,
+			MTime:    float64(info.ModTime().UnixNano()) / 1e9,
+		})
 		return nil
 	})
 
@@ -833,10 +896,30 @@ func (v *Vault) ScanNotes(includeMedia bool) ([]NoteRecord, []string, error) {
 	}
 	sort.Strings(folders)
 
-	return notes, folders, nil
+	// The snapshot takes ownership of the walk slices; callers get copies.
+	v.scanCache.store(notes, folders)
+	outFolders := make([]string, len(folders))
+	copy(outFolders, folders)
+	return filterScanNotes(notes, includeMedia), outFolders, nil
+}
+
+// filterScanNotes copies the requested records out of the stored snapshot.
+func filterScanNotes(notes []NoteRecord, includeMedia bool) []NoteRecord {
+	out := make([]NoteRecord, 0, len(notes))
+	for _, n := range notes {
+		if includeMedia || n.Type == "note" {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // Backlinks resolution
+
+// GetBacklinks returns every note linking to targetNotePath. It reads the link
+// occurrences recorded at index time instead of re-scanning note contents, so
+// its cost is a handful of map lookups per note rather than a regex pass over
+// the whole vault per request.
 func (v *Vault) GetBacklinks(targetNotePath string) []BacklinkItem {
 	targetPath := targetNotePath
 	targetPathLower := strings.ToLower(targetPath)
@@ -864,149 +947,160 @@ func (v *Vault) GetBacklinks(targetNotePath string) []BacklinkItem {
 		if note.Path == targetPath {
 			continue
 		}
-		content, err := v.GetNoteContent(note.Path)
-		if err != nil {
+		wikiLinks, mdLinks := v.idx.links(note.Path)
+		if len(wikiLinks) == 0 && len(mdLinks) == 0 {
 			continue
 		}
 
-		refs := extractBacklinkReferences(note.Path, targetPath, targetPathLower, targetPathNoExtLower, wikilinkRefs, content)
-		if len(refs) > 0 {
-			if len(refs) > 3 {
-				refs = refs[:3]
+		var refs []BacklinkRef
+		// Wikilinks first, then markdown links; the stable line sort below
+		// restores the original line order (wikilink before markdown when
+		// both appear on the same line).
+		for _, occ := range wikiLinks {
+			if wikilinkMatchesTarget(occ.Target, wikilinkRefs) {
+				refs = append(refs, BacklinkRef{LineNumber: occ.Line, Context: occ.Context, Type: "wikilink"})
 			}
-			backlinks = append(backlinks, BacklinkItem{
-				Path:       note.Path,
-				Name:       strings.TrimSuffix(note.Name, ".md"),
-				References: refs,
-			})
 		}
+		for _, occ := range mdLinks {
+			if mdLinkMatchesTarget(occ.Target, note.Folder, targetPath, targetPathLower, targetPathNoExtLower) {
+				refs = append(refs, BacklinkRef{LineNumber: occ.Line, Context: occ.Context, Type: "markdown"})
+			}
+		}
+		if len(refs) == 0 {
+			continue
+		}
+		sort.SliceStable(refs, func(i, j int) bool { return refs[i].LineNumber < refs[j].LineNumber })
+		if len(refs) > 3 {
+			refs = refs[:3]
+		}
+		backlinks = append(backlinks, BacklinkItem{
+			Path:       note.Path,
+			Name:       strings.TrimSuffix(note.Name, ".md"),
+			References: refs,
+		})
 	}
 	return backlinks
 }
 
-func extractBacklinkReferences(
-	sourcePath string,
-	targetPath string,
-	targetPathLower string,
-	targetPathNoExtLower string,
-	wikilinkRefs map[string]struct{},
-	content string,
-) []BacklinkRef {
-	sourceFolder := strings.ReplaceAll(filepath.Dir(sourcePath), "\\", "/")
-	if sourceFolder == "." {
-		sourceFolder = ""
+// linkContext builds the surrounding-text window backlinks show for one link,
+// clipped30 bytes around the match span and ellipsized at the edges. The
+// window is computed once, when the note is indexed.
+func linkContext(line string, matchStart, matchEnd int) string {
+	start := matchStart - 30
+	if start < 0 {
+		start = 0
 	}
+	end := matchEnd + 30
+	if end > len(line) {
+		end = len(line)
+	}
+	ctx := line[start:end]
+	if start > 0 {
+		ctx = "..." + ctx
+	}
+	if end < len(line) {
+		ctx = ctx + "..."
+	}
+	return ctx
+}
 
+// extractOutLinks finds every wikilink and markdown link in content exactly
+// once, when the note is indexed: backlinks and the graph then query these
+// occurrences instead of re-running the regexes over the whole vault on every
+// request. Targets are normalized the way each consumer needs them (wikilinks
+// already have their "#Heading" anchor stripped; markdown links keep the raw,
+// trimmed destination so resolution can stay relative to the reading note).
+func extractOutLinks(content string) (wiki, md []LinkOcc) {
 	lines := strings.Split(content, "\n")
-	var found []BacklinkRef
-
 	for lineNum, line := range lines {
 		num := lineNum + 1
 
 		// Wikilinks
 		for _, match := range wikilinkRe.FindAllStringSubmatchIndex(line, -1) {
-			rawTarget := strings.TrimSpace(line[match[2]:match[3]])
+			target := strings.TrimSpace(line[match[2]:match[3]])
 			// [[Note#Heading]] is a link to Note; the heading is an anchor,
 			// not part of the target path.
-			if idx := strings.Index(rawTarget, "#"); idx != -1 {
-				rawTarget = strings.TrimSpace(rawTarget[:idx])
+			if idx := strings.Index(target, "#"); idx != -1 {
+				target = strings.TrimSpace(target[:idx])
 			}
-			if rawTarget == "" {
+			if target == "" {
 				continue
 			}
-			targetLower := strings.ToLower(rawTarget)
-			targetNoExt := strings.TrimSuffix(targetLower, ".md")
-
-			_, in1 := wikilinkRefs[targetLower]
-			_, in2 := wikilinkRefs[targetNoExt]
-			if in1 || in2 {
-				start := match[0] - 30
-				if start < 0 {
-					start = 0
-				}
-				end := match[1] + 30
-				if end > len(line) {
-					end = len(line)
-				}
-				ctx := line[start:end]
-				if start > 0 {
-					ctx = "..." + ctx
-				}
-				if end < len(line) {
-					ctx = ctx + "..."
-				}
-				found = append(found, BacklinkRef{
-					LineNumber: num,
-					Context:    ctx,
-					Type:       "wikilink",
-				})
-			}
+			wiki = append(wiki, LinkOcc{
+				Target:  target,
+				Line:    num,
+				Type:    "wikilink",
+				Context: linkContext(line, match[0], match[1]),
+			})
 		}
 
 		// Markdown links
 		for _, match := range mdlinkRe.FindAllStringSubmatchIndex(line, -1) {
-			rawTarget := line[match[4]:match[5]]
+			rawTarget := strings.TrimSpace(line[match[4]:match[5]])
 			if isExternalOrFragmentLink(rawTarget) {
 				continue
 			}
-			parts := strings.Split(rawTarget, "#")
-			linkPath := parts[0]
-			if linkPath == "" {
+			if strings.Split(rawTarget, "#")[0] == "" {
 				continue
 			}
-			if u, err := url.PathUnescape(linkPath); err == nil {
-				linkPath = u
-			}
-			if strings.HasPrefix(linkPath, "./") {
-				linkPath = linkPath[2:]
-			}
-			linkPathWithMD := linkPath
-			if !strings.HasSuffix(linkPathWithMD, ".md") {
-				linkPathWithMD += ".md"
-			}
-
-			var resolvedPath string
-			if sourceFolder != "" && !strings.HasPrefix(linkPath, "/") {
-				relPath := fmt.Sprintf("%s/%s", sourceFolder, linkPathWithMD)
-				if strings.ToLower(relPath) == targetPathLower {
-					resolvedPath = targetPath
-				} else if strings.ToLower(fmt.Sprintf("%s/%s", sourceFolder, linkPath)) == targetPathNoExtLower {
-					resolvedPath = targetPath
-				}
-			}
-			if resolvedPath == "" {
-				if strings.ToLower(linkPathWithMD) == targetPathLower {
-					resolvedPath = targetPath
-				} else if strings.ToLower(linkPath) == targetPathNoExtLower {
-					resolvedPath = targetPath
-				}
-			}
-
-			if resolvedPath != "" {
-				start := match[0] - 30
-				if start < 0 {
-					start = 0
-				}
-				end := match[1] + 30
-				if end > len(line) {
-					end = len(line)
-				}
-				ctx := line[start:end]
-				if start > 0 {
-					ctx = "..." + ctx
-				}
-				if end < len(line) {
-					ctx = ctx + "..."
-				}
-				found = append(found, BacklinkRef{
-					LineNumber: num,
-					Context:    ctx,
-					Type:       "markdown",
-				})
-			}
+			md = append(md, LinkOcc{
+				Target:  rawTarget,
+				Line:    num,
+				Type:    "markdown",
+				Context: linkContext(line, match[0], match[1]),
+			})
 		}
 	}
-	return found
+	return wiki, md
+}
+
+// wikilinkMatchesTarget reports whether [[rawTarget]] points at the backlink
+// target: by full path (with or without ".md") or by note stem.
+func wikilinkMatchesTarget(rawTarget string, refs map[string]struct{}) bool {
+	targetLower := strings.ToLower(rawTarget)
+	_, byPath := refs[targetLower]
+	_, byPathNoExt := refs[strings.TrimSuffix(targetLower, ".md")]
+	return byPath || byPathNoExt
+}
+
+// mdLinkMatchesTarget reproduces the backlink resolution of a markdown link:
+// relative to the note's folder first, then to the vault root, with and
+// without the ".md" suffix.
+func mdLinkMatchesTarget(rawTarget, sourceFolder, targetPath, targetPathLower, targetPathNoExtLower string) bool {
+	if isExternalOrFragmentLink(rawTarget) {
+		return false
+	}
+	linkPath := strings.Split(rawTarget, "#")[0]
+	if linkPath == "" {
+		return false
+	}
+	if u, err := url.PathUnescape(linkPath); err == nil {
+		linkPath = u
+	}
+	if strings.HasPrefix(linkPath, "./") {
+		linkPath = linkPath[2:]
+	}
+	linkPathWithMD := linkPath
+	if !strings.HasSuffix(linkPathWithMD, ".md") {
+		linkPathWithMD += ".md"
+	}
+
+	if sourceFolder != "" && !strings.HasPrefix(linkPath, "/") {
+		relPath := fmt.Sprintf("%s/%s", sourceFolder, linkPathWithMD)
+		if strings.ToLower(relPath) == targetPathLower {
+			return true
+		}
+		if strings.ToLower(fmt.Sprintf("%s/%s", sourceFolder, linkPath)) == targetPathNoExtLower {
+			return true
+		}
+	}
+	if strings.ToLower(linkPathWithMD) == targetPathLower {
+		return true
+	}
+	if strings.ToLower(linkPath) == targetPathNoExtLower {
+		return true
+	}
+	return false
 }
 
 // Resolver for graph edges
@@ -1203,10 +1297,9 @@ func (v *Vault) GetGraphData(includeSystemFolders bool) (GraphData, error) {
 		}
 		nodePaths = append(nodePaths, p)
 
-		content, err := v.GetNoteContent(p)
-		if err != nil {
-			continue
-		}
+		// Links were extracted when the note was indexed: no content read and
+		// no regex pass per graph request.
+		wikiLinks, mdLinks := v.idx.links(p)
 
 		sourceFolder := strings.ReplaceAll(filepath.Dir(p), "\\", "/")
 		if sourceFolder == "." {
@@ -1214,9 +1307,8 @@ func (v *Vault) GetGraphData(includeSystemFolders bool) (GraphData, error) {
 		}
 
 		// 1. Wikilinks (first-wins)
-		for _, match := range wikilinkRe.FindAllStringSubmatch(content, -1) {
-			target := strings.TrimSpace(match[1])
-			resolved := resolver.ResolveWikilink(target, sourceFolder)
+		for _, occ := range wikiLinks {
+			resolved := resolver.ResolveWikilink(occ.Target, sourceFolder)
 			if resolved != "" && resolved != p {
 				if !includeSystemFolders && IsUnderSystemFolder(resolved) {
 					continue
@@ -1233,12 +1325,8 @@ func (v *Vault) GetGraphData(includeSystemFolders bool) (GraphData, error) {
 		}
 
 		// 2. Markdown links
-		for _, match := range mdlinkRe.FindAllStringSubmatch(content, -1) {
-			target := strings.TrimSpace(match[2])
-			if isExternalOrFragmentLink(target) {
-				continue
-			}
-			resolved := resolver.ResolveMDLink(target, sourceFolder)
+		for _, occ := range mdLinks {
+			resolved := resolver.ResolveMDLink(occ.Target, sourceFolder)
 			if resolved != "" && resolved != p {
 				if !includeSystemFolders && IsUnderSystemFolder(resolved) {
 					continue
