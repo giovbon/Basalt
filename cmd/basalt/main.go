@@ -1,4 +1,4 @@
-// Command notediscovery starts the NoteDiscovery HTTP server.
+// Command basalt starts the Basalt HTTP server.
 package main
 
 import (
@@ -83,8 +83,11 @@ func run() error {
 	httpSrv := &http.Server{
 		Addr:              addr,
 		Handler:           handler,
+		ReadTimeout:       5 * time.Minute,
+		WriteTimeout:      15 * time.Minute,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

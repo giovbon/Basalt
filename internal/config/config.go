@@ -87,7 +87,7 @@ func parseIntEnv(key string, fallback int) int {
 func Load(configPath, versionPath string) (*Config, error) {
 	cfg := &Config{
 		App: AppConfig{
-			Name: "NoteDiscovery",
+			Name: "Basalt",
 		},
 		Server: ServerConfig{
 			Host:           "0.0.0.0",
@@ -124,7 +124,7 @@ func Load(configPath, versionPath string) (*Config, error) {
 	if verData, err := os.ReadFile(versionPath); err == nil {
 		cfg.App.Version = strings.TrimSpace(string(verData))
 	} else {
-		cfg.App.Version = "2.1.0"
+		cfg.App.Version = "dev"
 	}
 
 	// 2. APP_NAME env var > app.name
@@ -166,12 +166,14 @@ func Load(configPath, versionPath string) (*Config, error) {
 	log.Printf("Index cache: %s (from %s)", cfg.Storage.IndexFile, idxSource)
 
 	// 4. UI: DEFAULT_THEME
-	themeSource := "config.yaml"
 	if t := strings.TrimSpace(os.Getenv("DEFAULT_THEME")); t != "" {
 		cfg.UI.DefaultTheme = t
-		themeSource = "DEFAULT_THEME env var"
-	} else if strings.TrimSpace(cfg.UI.DefaultTheme) == "" {
-		cfg.UI.DefaultTheme = "light"
+		log.Printf("Default theme: %s (from DEFAULT_THEME env var)", cfg.UI.DefaultTheme)
+	} else {
+		if strings.TrimSpace(cfg.UI.DefaultTheme) == "" {
+			cfg.UI.DefaultTheme = "light"
+		}
+		log.Printf("Default theme: %s (from config.yaml)", cfg.UI.DefaultTheme)
 	}
 
 	// Autosave delay clamp 250 - 60000 ms
@@ -256,7 +258,6 @@ func Load(configPath, versionPath string) (*Config, error) {
 	cfg.UploadMaxNoteMb = parseIntEnv("UPLOAD_MAX_NOTE_MB", 10)
 	cfg.ArchiveMaxMb = parseIntEnv("ARCHIVE_MAX_FOLDER_MB", 500)
 
-	_ = themeSource
 	return cfg, nil
 }
 

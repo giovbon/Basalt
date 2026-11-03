@@ -34,9 +34,28 @@ func isCompressibleContentType(ct string) bool {
 // support. Wrapping the outermost handler covers the SPA shell, static
 // assets (app.js, index.html, CSS, vendor libs) and JSON API responses
 // alike. Level is the stdlib default (6): a good speed/size trade-off.
+// addVary appends token to the response's Vary header, skipping duplicates.
+// Multiple values are merged into a single comma-separated header so callers
+// that use Header().Get("Vary") still observe the complete list.
+func addVary(w http.ResponseWriter, token string) {
+	existing := w.Header().Values("Vary")
+	for _, value := range existing {
+		for _, part := range strings.Split(value, ",") {
+			if strings.EqualFold(strings.TrimSpace(part), token) {
+				return
+			}
+		}
+	}
+	if len(existing) == 0 {
+		w.Header().Set("Vary", token)
+		return
+	}
+	w.Header().Set("Vary", strings.Join(append(existing, token), ", "))
+}
+
 func gzipHandler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Add("Vary", "Accept-Encoding")
+		addVary(w, "Accept-Encoding")
 
 		acceptsGzip := r.Method != http.MethodHead &&
 			strings.Contains(strings.ToLower(r.Header.Get("Accept-Encoding")), "gzip")

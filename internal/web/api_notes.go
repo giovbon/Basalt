@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -137,8 +138,8 @@ func (h *NotesHandler) SaveNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Python quirk: with_suffix('.md') when not ending in .md
-	if !strings.HasSuffix(notePath, ".md") {
+	// Append .md (case-insensitive) when the path does not already end in .md
+	if !strings.EqualFold(filepath.Ext(notePath), ".md") {
 		notePath = notePath + ".md"
 	}
 
@@ -159,28 +160,28 @@ func (h *NotesHandler) SaveNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existingContent, err := h.vault.GetNoteContent(notePath)
-	isNewNote := (err != nil)
-
-	// Optimistic concurrency check
-	if payload.BaseHash != "" && !isNewNote {
-		currentHash := vault.ContentHash(existingContent)
-		if currentHash != payload.BaseHash {
-			RespondJSON(w, http.StatusConflict, ConflictHashResponse{
-				Detail: "Note changed on disk since it was loaded",
-				Hash:   currentHash,
-			})
-			return
+	result, err := h.vault.SaveNoteIfHash(notePath, payload.Content, payload.BaseHash)
+	if err != nil {
+		status := http.StatusInternalServerError
+		msg := "Failed to save note"
+		if strings.Contains(strings.ToLower(err.Error()), "invalid path") {
+			status = http.StatusBadRequest
+			msg = "Invalid note path"
 		}
+		RespondError(w, status, msg)
+		return
 	}
 
-	if err := h.vault.SaveNote(notePath, payload.Content); err != nil {
-		RespondError(w, http.StatusInternalServerError, "Failed to save note")
+	if !result.Saved {
+		RespondJSON(w, http.StatusConflict, ConflictHashResponse{
+			Detail: "Note changed on disk since it was loaded",
+			Hash:   result.CurrentHash,
+		})
 		return
 	}
 
 	msg := "Note saved successfully"
-	if isNewNote {
+	if result.Created {
 		msg = "Note created successfully"
 	}
 
@@ -190,7 +191,7 @@ func (h *NotesHandler) SaveNote(w http.ResponseWriter, r *http.Request) {
 		Path:        notePath,
 		Message:     msg,
 		Content:     payload.Content,
-		Hash:        vault.ContentHash(payload.Content),
+		Hash:        result.CurrentHash,
 		Frontmatter: parsed.Frontmatter,
 		Outline:     parsed.Outline,
 		Tags:        parsed.Tags,
@@ -261,9 +262,19 @@ func (h *NotesHandler) ReplaceInNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	baseHash := vault.ContentHash(content)
 	newContent := strings.Replace(content, oldStr, newStr, 1)
-	if err := h.vault.SaveNote(payload.Path, newContent); err != nil {
+
+	result, err := h.vault.SaveNoteIfHash(payload.Path, newContent, baseHash)
+	if err != nil {
 		RespondError(w, http.StatusInternalServerError, "Failed to update note")
+		return
+	}
+	if !result.Saved {
+		RespondJSON(w, http.StatusConflict, ConflictHashResponse{
+			Detail: "Note changed on disk since it was loaded",
+			Hash:   result.CurrentHash,
+		})
 		return
 	}
 
@@ -272,7 +283,7 @@ func (h *NotesHandler) ReplaceInNote(w http.ResponseWriter, r *http.Request) {
 		"success":     true,
 		"path":        payload.Path,
 		"message":     "Note updated successfully",
-		"hash":        vault.ContentHash(newContent),
+		"hash":        result.CurrentHash,
 		"frontmatter": parsed.Frontmatter,
 		"outline":     parsed.Outline,
 		"tags":        parsed.Tags,
@@ -296,9 +307,9 @@ func (h *NotesHandler) MoveNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Suffix with .md if missing
+	// Suffix with .md if missing (case-insensitive)
 	newPath := payload.NewPath
-	if !strings.HasSuffix(newPath, ".md") {
+	if !strings.EqualFold(filepath.Ext(newPath), ".md") {
 		newPath += ".md"
 	}
 

@@ -82,7 +82,7 @@ func (m *Manager) CheckAPIKey(r *http.Request) bool {
 }
 
 // CreateSessionCookie signs and creates the session HTTP cookie
-func (m *Manager) CreateSessionCookie() *http.Cookie {
+func (m *Manager) CreateSessionCookie(secure bool) *http.Cookie {
 	data := SessionData{
 		Authenticated: true,
 		ExpiresAt:     time.Now().Add(m.sessionMaxAge).Unix(),
@@ -103,12 +103,12 @@ func (m *Manager) CreateSessionCookie() *http.Cookie {
 		MaxAge:   int(m.sessionMaxAge.Seconds()),
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   false,
+		Secure:   secure,
 	}
 }
 
 // ClearSessionCookie returns an expired cookie
-func (m *Manager) ClearSessionCookie() *http.Cookie {
+func (m *Manager) ClearSessionCookie(secure bool) *http.Cookie {
 	return &http.Cookie{
 		Name:     CookieName,
 		Value:    "",
@@ -116,7 +116,7 @@ func (m *Manager) ClearSessionCookie() *http.Cookie {
 		MaxAge:   -1,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   false,
+		Secure:   secure,
 	}
 }
 

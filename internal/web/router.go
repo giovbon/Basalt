@@ -94,21 +94,39 @@ func NewServer(cfg *config.Config, v *vault.Vault, sess *session.Manager, assets
 
 	// Wrap in CORS
 	corsHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		addVary(w, "Origin")
+
 		origin := r.Header.Get("Origin")
 		allowed := false
+		allowedOrigin := ""
+		wildcard := false
 		for _, o := range cfg.Server.AllowedOrigins {
-			if o == "*" || o == origin {
-				allowed = true
+			if o == "*" {
+				wildcard = true
 				break
+			}
+		}
+		if wildcard {
+			allowed = true
+			allowedOrigin = "*"
+		} else {
+			for _, o := range cfg.Server.AllowedOrigins {
+				if o != "" && o == origin {
+					allowed = true
+					allowedOrigin = o
+					break
+				}
 			}
 		}
 
 		if allowed {
-			if origin != "" {
-				w.Header().Set("Access-Control-Allow-Origin", origin)
-				w.Header().Set("Access-Control-Allow-Credentials", "true")
-			} else {
+			// Wildcard never allows credentials; specific origins are only
+			// honored when they exactly match the request Origin.
+			if allowedOrigin == "*" {
 				w.Header().Set("Access-Control-Allow-Origin", "*")
+			} else if origin != "" && origin == allowedOrigin {
+				w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+				w.Header().Set("Access-Control-Allow-Credentials", "true")
 			}
 		}
 
@@ -130,8 +148,19 @@ func NewServer(cfg *config.Config, v *vault.Vault, sess *session.Manager, assets
 		mux:     mux,
 		// Outermost layer: gzip everything the client accepts (shell, static
 		// assets and JSON API), decided per response by Content-Type.
-		handler: gzipHandler(corsHandler),
+		// Inside: security headers + CORS/auth chain.
+		handler: gzipHandler(securityHeadersHandler(corsHandler)),
 	}
+}
+
+// securityHeadersHandler adds baseline security headers to every response.
+func securityHeadersHandler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {

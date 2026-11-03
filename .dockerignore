@@ -1,6 +1,7 @@
 .git
 .github
-notediscovery
+/notediscovery
+/basalt
 data/
 test_data/
 *.exe

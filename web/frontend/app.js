@@ -1,4 +1,4 @@
-// NoteDiscovery Frontend Application
+// Basalt Frontend Application
 
 // Configuration constants
 const CONFIG = {
@@ -267,7 +267,7 @@ function applyEditorOutdent(text, selStart, selEnd) {
 function noteApp() {
     return {
         // App state
-        appName: 'NoteDiscovery',
+        appName: 'Basalt',
         appVersion: '0.0.0',
         authEnabled: false,
         demoMode: false,
@@ -347,7 +347,7 @@ function noteApp() {
         // Locale/i18n state
         currentLocale: localStorage.getItem('locale') || 'pt-BR',
         availableLocales: [],
-        // Translations loaded from backend (preloaded before Alpine init via window.__preloadedTranslations)
+        // Translations inlined server-side into index.html before Alpine init (window.__preloadedTranslations)
         translations: window.__preloadedTranslations || {},
         
         // Syntax highlighting
@@ -711,7 +711,7 @@ function noteApp() {
             await this.loadThemes();
             await this.initTheme();
             await this.loadAvailableLocales();
-            // Note: Translations are preloaded synchronously before Alpine init (see index.html)
+            // Note: Translations are inlined into index.html before Alpine init (see index.html)
             // loadLocale() is only called when user changes language from settings
             await this.loadNotes();
             this.loadLocalSettings();
@@ -1389,29 +1389,47 @@ function noteApp() {
         
         // Apply theme to document
         async applyTheme(themeId) {
-            // Load theme CSS from file. The head preload may already have inserted
-            // #dynamic-theme for this id; skip the second download and the CSS write
-            // in that case. Highlight.js is still updated below, because the preload
-            // does not touch #highlight-theme.
+            // index.html ships a blocking <link id="theme-stylesheet"> and an inline
+            // head script that points it at the saved/default id and sets data-theme,
+            // so on first load the CSS is already present and nothing is fetched.
+            // Runtime changes just retarget the link (it blocks paint until the new
+            // CSS arrives). The JSON fetch + #dynamic-theme style element remains as
+            // a fallback for pages served without the link. Highlight.js is still
+            // updated below either way, because the theme link only carries the app
+            // theme CSS.
             try {
-                const existing = document.getElementById('dynamic-theme');
-                const alreadyLoaded = existing
-                    && existing.textContent
-                    && document.documentElement.getAttribute('data-theme') === themeId;
+                const link = document.getElementById('theme-stylesheet');
+                const styleEl = document.getElementById('dynamic-theme');
+                const alreadyLoaded =
+                    document.documentElement.getAttribute('data-theme') === themeId &&
+                    (link !== null || (styleEl !== null && styleEl.textContent));
 
                 if (!alreadyLoaded) {
-                    const response = await fetch(`/api/themes/${themeId}`);
-                    const data = await response.json();
+                    if (link) {
+                        // Retarget the existing stylesheet; no JSON round-trip needed.
+                        link.href = '/api/themes/' + encodeURIComponent(themeId);
+                        document.documentElement.setAttribute('data-theme', themeId);
+                    } else {
+                        const response = await fetch(`/api/themes/${themeId}`);
+                        const body = await response.text();
+                        // Accept both the JSON envelope {css: "..."} and raw CSS.
+                        let css = body;
+                        try {
+                            css = JSON.parse(body).css;
+                        } catch (_) {
+                            // Raw CSS response; keep the body as-is
+                        }
 
-                    let styleEl = existing;
-                    if (!styleEl) {
-                        styleEl = document.createElement('style');
-                        styleEl.id = 'dynamic-theme';
-                        document.head.appendChild(styleEl);
+                        let el = styleEl;
+                        if (!el) {
+                            el = document.createElement('style');
+                            el.id = 'dynamic-theme';
+                            document.head.appendChild(el);
+                        }
+                        el.textContent = css;
+
+                        document.documentElement.setAttribute('data-theme', themeId);
                     }
-                    styleEl.textContent = data.css;
-
-                    document.documentElement.setAttribute('data-theme', themeId);
                 }
                 
                 // Load appropriate Highlight.js theme for code syntax highlighting

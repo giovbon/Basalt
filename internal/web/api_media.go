@@ -34,8 +34,16 @@ func (h *MediaHandler) GetMedia(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	info, err := os.Stat(fullPath)
-	if err != nil || info.IsDir() {
+	info, err := os.Lstat(fullPath)
+	if err != nil {
+		RespondError(w, http.StatusNotFound, "File not found")
+		return
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		RespondError(w, http.StatusForbidden, "Access denied")
+		return
+	}
+	if !info.Mode().IsRegular() {
 		RespondError(w, http.StatusNotFound, "File not found")
 		return
 	}
@@ -68,10 +76,10 @@ var allowedMIMETypes = map[string]string{
 	"audio/x-m4a": "audio",
 	"audio/mp4":   "audio",
 	// Video
-	"video/mp4":                "video",
-	"video/webm":               "video",
-	"video/quicktime":          "video",
-	"video/x-msvideo":          "video",
+	"video/mp4":       "video",
+	"video/webm":      "video",
+	"video/quicktime": "video",
+	"video/x-msvideo": "video",
 	// Document
 	"application/pdf":          "document",
 	"application/x-pdf":        "document",
@@ -94,12 +102,6 @@ func (h *MediaHandler) UploadMedia(w http.ResponseWriter, r *http.Request) {
 
 	notePath := r.FormValue("note_path")
 
-	fileData, err := io.ReadAll(file)
-	if err != nil {
-		RespondError(w, http.StatusBadRequest, "Failed to read uploaded file")
-		return
-	}
-
 	contentType := strings.ToLower(header.Header.Get("Content-Type"))
 	if idx := strings.Index(contentType, ";"); idx != -1 {
 		contentType = contentType[:idx]
@@ -110,13 +112,30 @@ func (h *MediaHandler) UploadMedia(w http.ResponseWriter, r *http.Request) {
 	ext := strings.ToLower(filepath.Ext(header.Filename))
 	allowedExts := vault.AllMediaExtensions()
 
-	if !ok {
+	// Treat binary/octet-stream (and unknown types) by deriving the category
+	// from the file extension; reject disallowed extensions instead of
+	// falling back to the image size limit.
+	if mediaCategory == "binary" {
+		if _, hasExt := allowedExts[ext]; !hasExt {
+			RespondError(w, http.StatusBadRequest, fmt.Sprintf("Invalid file type. Allowed: images, audio (mp3), video (mp4), PDF. Got: %s", contentType))
+			return
+		}
+		mediaCategory = vault.GetMediaType(header.Filename)
+		if mediaCategory == "" {
+			RespondError(w, http.StatusBadRequest, fmt.Sprintf("Invalid file type. Allowed: images, audio (mp3), video (mp4), PDF. Got: %s", contentType))
+			return
+		}
+	} else if !ok {
 		// Fallback checking extension
 		if _, hasExt := allowedExts[ext]; !hasExt {
 			RespondError(w, http.StatusBadRequest, fmt.Sprintf("Invalid file type. Allowed: images, audio (mp3), video (mp4), PDF. Got: %s", contentType))
 			return
 		}
 		mediaCategory = vault.GetMediaType(header.Filename)
+		if mediaCategory == "" {
+			RespondError(w, http.StatusBadRequest, fmt.Sprintf("Invalid file type. Allowed: images, audio (mp3), video (mp4), PDF. Got: %s", contentType))
+			return
+		}
 	}
 
 	var maxSize int64
@@ -133,6 +152,12 @@ func (h *MediaHandler) UploadMedia(w http.ResponseWriter, r *http.Request) {
 		maxSize = h.cfg.UploadMaxImage
 	}
 
+	// Bound memory usage while reading the upload.
+	fileData, err := io.ReadAll(io.LimitReader(file, maxSize+1))
+	if err != nil {
+		RespondError(w, http.StatusBadRequest, "Failed to read uploaded file")
+		return
+	}
 	if int64(len(fileData)) > maxSize {
 		RespondError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("File size exceeds maximum allowed of %dMB", maxSize/(1024*1024)))
 		return

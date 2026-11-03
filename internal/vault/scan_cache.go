@@ -135,6 +135,10 @@ func makeNoteRecord(rel string, info fs.FileInfo, tags []string) NoteRecord {
 	folder := filepath.Dir(rel)
 	if folder == "." {
 		folder = ""
+	} else {
+		// filepath.Dir emits the platform separator; records are kept in slash
+		// form everywhere so folder paths are cross-platform equal.
+		folder = strings.ReplaceAll(folder, "\\", "/")
 	}
 	return NoteRecord{
 		Name:     name,

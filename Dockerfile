@@ -3,7 +3,7 @@
 # -----------------------------------------------------------------------------
 # Stage 1: Build (usa binário pré-compilado se existir, ou compila nativamente)
 # -----------------------------------------------------------------------------
-FROM --platform=$BUILDPLATFORM golang:1.22-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.23-alpine AS builder
 
 WORKDIR /src
 

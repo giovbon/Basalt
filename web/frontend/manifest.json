@@ -1,6 +1,6 @@
 {
   "name": "__APP_NAME__",
-  "short_name": "Basalt",
+  "short_name": "__APP_NAME__",
   "description": "Notas em Markdown auto-hospedadas, com links bidirecionais e grafo de conexões",
   "start_url": "/",
   "display": "standalone",

@@ -13,28 +13,14 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="__APP_NAME__">
     
-    <!-- Preload translations (same approach as index.html) -->
+    <!-- Translations are embedded server-side: LoginPageRoute replaces
+         __PRELOADED_TRANSLATIONS__ with the pt-BR locale JSON (the page's
+         lang and only shipped locale), so no synchronous XHR is needed. -->
+    <script>window.__preloadedTranslations = __PRELOADED_TRANSLATIONS__;</script>
     <script>
         (function() {
-            const locale = localStorage.getItem('locale') || 'pt-BR';
-            const xhr = new XMLHttpRequest();
-            xhr.open('GET', '/api/locales/' + locale, false);
-            try {
-                xhr.send();
-                if (xhr.status === 200) {
-                    window.__translations = JSON.parse(xhr.responseText);
-                } else if (locale !== 'pt-BR') {
-                    xhr.open('GET', '/api/locales/pt-BR', false);
-                    xhr.send();
-                    if (xhr.status === 200) {
-                        window.__translations = JSON.parse(xhr.responseText);
-                    }
-                }
-            } catch (e) {
-                console.error('Failed to preload translations:', e);
-                window.__translations = {};
-            }
-            
+            window.__translations = window.__preloadedTranslations || {};
+
             // Simple translation function
             window.t = function(key) {
                 const keys = key.split('.');
@@ -47,26 +33,24 @@
         })();
     </script>
     
-    <!-- Preload the theme before first paint (same approach as index.html).
-         data-theme is set only after the CSS is parsed and inserted. -->
+    <!-- Theme: a blocking stylesheet <link> still resolves before first paint,
+         so a reload never flashes the wrong theme. The tiny script below points
+         it at the saved preference, falling back to the configured default
+         (__DEFAULT_THEME__), without a synchronous XHR. -->
+    <link id="theme-stylesheet" rel="stylesheet" href="/api/themes/__DEFAULT_THEME__">
     <script>
         (function() {
             try {
-                const themeId = localStorage.getItem('noteDiscoveryTheme') || '__DEFAULT_THEME__';
-                if (!themeId) return;
-                const xhr = new XMLHttpRequest();
-                xhr.open('GET', '/api/themes/' + encodeURIComponent(themeId), false);
-                xhr.send();
-                if (xhr.status !== 200) return;
-                const css = JSON.parse(xhr.responseText).css;
-                if (typeof css !== 'string' || !css) return;
-                const styleEl = document.createElement('style');
-                styleEl.id = 'dynamic-theme';
-                styleEl.textContent = css;
-                document.head.appendChild(styleEl);
-                document.documentElement.setAttribute('data-theme', themeId);
+                const saved = localStorage.getItem('noteDiscoveryTheme') || '__DEFAULT_THEME__';
+                document.documentElement.setAttribute('data-theme', saved);
+                if (saved !== '__DEFAULT_THEME__') {
+                    const link = document.getElementById('theme-stylesheet');
+                    if (link) {
+                        link.href = '/api/themes/' + encodeURIComponent(saved);
+                    }
+                }
             } catch (e) {
-                console.error('Failed to preload theme:', e);
+                console.error('Failed to apply saved theme:', e);
             }
         })();
     </script>

@@ -231,7 +231,8 @@
     "password_placeholder": "Digite sua senha",
     "unlock_button": "🔓 Desbloquear",
     "footer": "🔒 Seguro e Auto-Hosteado",
-    "error_incorrect_password": "Senha incorreta. Tente novamente."
+    "error_incorrect_password": "Senha incorreta. Tente novamente.",
+    "error_too_many_attempts": "Muitas tentativas. Tente novamente em alguns minutos."
   },
   "media": {
     "confirm_delete": "Excluir \"{{name}}\"?",

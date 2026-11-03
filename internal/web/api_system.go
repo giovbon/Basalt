@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"mime"
 	"net/http"
 	"os"
 	"path"
@@ -149,6 +150,19 @@ func (h *SystemHandler) GetThemeCSS(w http.ResponseWriter, r *http.Request) {
 		RespondError(w, http.StatusNotFound, "Theme not found")
 		return
 	}
+
+	raw := r.URL.Query().Get("raw") == "1"
+	acceptCSS := strings.Contains(strings.ToLower(r.Header.Get("Accept")), "text/css")
+	// The response representation depends on Accept whether or not it is CSS.
+	addVary(w, "Accept")
+	if raw || acceptCSS {
+		w.Header().Set("Content-Type", "text/css; charset=utf-8")
+		w.Header().Set("Cache-Control", "public, max-age=3600")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(css))
+		return
+	}
+
 	RespondJSON(w, http.StatusOK, map[string]any{
 		"css":      css,
 		"theme_id": themeID,
@@ -226,7 +240,7 @@ func (h *SystemHandler) GetLocale(w http.ResponseWriter, r *http.Request) {
 
 	var parsed map[string]any
 	if err := json.Unmarshal(data, &parsed); err != nil {
-		RespondError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to load locale: %s", err.Error()))
+		RespondError(w, http.StatusInternalServerError, SafeErrorMessage(err, "Failed to load locale", h.cfg.Server.Debug))
 		return
 	}
 
@@ -300,7 +314,7 @@ func (h *SystemHandler) ExportNote(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if isDownload {
-		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.html"`, stem))
+		w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": stem + ".html"}))
 	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(body))
@@ -341,7 +355,7 @@ func (h *SystemHandler) ArchiveFolder(w http.ResponseWriter, r *http.Request) {
 	downloadFilename := fmt.Sprintf("%s-%s.zip", archiveName, timestamp)
 
 	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, downloadFilename))
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": downloadFilename}))
 
 	zipWriter := zip.NewWriter(w)
 	defer zipWriter.Close()

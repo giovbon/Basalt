@@ -273,3 +273,106 @@ func TestCacheBudgetsEvictLRUInsteadOfDisabling(t *testing.T) {
 		t.Errorf("contentBytes = %d, over budget %d after folding", v.idx.contentBytes, contentCacheBudget)
 	}
 }
+
+// TestSaveNoteIfHash covers the compare-and-swap save: wrong base hash
+// refuses to write and reports the current hash, a matching base hash writes
+// without marking the note as created, and a new path is created.
+func TestSaveNoteIfHashCompareAndSwap(t *testing.T) {
+	dir := t.TempDir()
+	v := New(dir)
+
+	original := "# Note\n\nbody\n"
+	if err := v.SaveNote("note.md", original); err != nil {
+		t.Fatal(err)
+	}
+	baseHash := ContentHash(original)
+
+	before, err := os.ReadFile(filepath.Join(dir, "note.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Wrong base hash: nothing is written and the current hash comes back.
+	res, err := v.SaveNoteIfHash("note.md", "# Tampered\n", "wrong-hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Saved {
+		t.Error("Saved = true, want false with a wrong base hash")
+	}
+	if res.CurrentHash != baseHash {
+		t.Errorf("CurrentHash = %q, want current content hash %q", res.CurrentHash, baseHash)
+	}
+	after, err := os.ReadFile(filepath.Join(dir, "note.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Error("file was modified despite a wrong base hash")
+	}
+
+	// Matching base hash: saved, but not created.
+	res, err = v.SaveNoteIfHash("note.md", "# Updated\n", baseHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Saved {
+		t.Error("Saved = false, want true with a matching base hash")
+	}
+	if res.Created {
+		t.Error("Created = true, want false for an existing note")
+	}
+	if res.CurrentHash != ContentHash("# Updated\n") {
+		t.Errorf("CurrentHash = %q, want hash of the new content", res.CurrentHash)
+	}
+
+	// New path with empty base hash: always saves and is marked created.
+	res, err = v.SaveNoteIfHash("new.md", "# Brand new\n", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Saved || !res.Created {
+		t.Errorf("Saved = %v, Created = %v, want true true", res.Saved, res.Created)
+	}
+}
+
+// TestGetNoteContentRejectsSymlink ensures a symlink inside the vault that
+// points outside it is never followed.
+func TestGetNoteContentRejectsSymlink(t *testing.T) {
+	dir := t.TempDir()
+	v := New(dir)
+
+	outsideDir := t.TempDir()
+	outside := filepath.Join(outsideDir, "outside.txt")
+	if err := os.WriteFile(outside, []byte("outside secret data\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link.md")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlinks not supported in this environment: %v", err)
+	}
+
+	if _, err := v.GetNoteContent("link.md"); err == nil {
+		t.Error("GetNoteContent followed a symlink to a file outside the vault")
+	}
+	if _, err := v.GetFoldedContent("link.md"); err == nil {
+		t.Error("GetFoldedContent followed a symlink to a file outside the vault")
+	}
+}
+
+// TestDeleteFolderRootRefused ensures DeleteFolder(".") refuses to delete the
+// vault root and leaves every note intact.
+func TestDeleteFolderRootRefused(t *testing.T) {
+	dir := t.TempDir()
+	v := New(dir)
+	if err := v.SaveNote("keep.md", "# keep\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	if v.DeleteFolder(".") {
+		t.Error("DeleteFolder('.') = true, want false")
+	}
+	if _, err := v.GetNoteContent("keep.md"); err != nil {
+		t.Errorf("note at vault root was deleted: %v", err)
+	}
+}

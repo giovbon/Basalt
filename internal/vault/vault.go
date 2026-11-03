@@ -2,9 +2,11 @@ package vault
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net/url"
@@ -14,7 +16,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"notediscovery/internal/search"
@@ -403,8 +404,10 @@ func (v *Vault) GetNoteContent(notePath string) (string, error) {
 	if !v.ValidatePathSecurity(fullPath) {
 		return "", os.ErrNotExist
 	}
-	info, err := os.Stat(fullPath)
-	if err != nil || info.IsDir() {
+	// Lstat so a symlink masquerading as a note is rejected instead of being
+	// followed to a file that may sit outside the vault.
+	info, err := os.Lstat(fullPath)
+	if err != nil || !info.Mode().IsRegular() {
 		return "", os.ErrNotExist
 	}
 
@@ -440,9 +443,10 @@ func (v *Vault) GetFoldedContent(notePath string) (string, error) {
 	}
 	// The fold is keyed by the stat taken *before* the read below: an edit in
 	// between can then only cause a redundant refold later, never a stale fold
-	// being served as valid.
-	info, err := os.Stat(fullPath)
-	if err != nil || info.IsDir() {
+	// being served as valid. Lstat so a symlink is rejected rather than
+	// followed.
+	info, err := os.Lstat(fullPath)
+	if err != nil || !info.Mode().IsRegular() {
 		v.mu.RUnlock()
 		return "", os.ErrNotExist
 	}
@@ -465,10 +469,27 @@ func (v *Vault) GetFoldedContent(notePath string) (string, error) {
 func (v *Vault) SaveNote(notePath string, content string) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	return v.saveNoteLocked(notePath, content)
+}
 
+// saveNoteLocked writes a note and refreshes the index with what was written.
+// The caller must hold v.mu for the whole call: SaveNote wraps it with the
+// lock, and SaveNoteIfHash keeps it across its read-check-write sequence so a
+// concurrent save cannot slip between the two.
+func (v *Vault) saveNoteLocked(notePath string, content string) error {
 	fullPath := v.FullPath(notePath)
 	if !v.ValidatePathSecurity(fullPath) {
 		return fmt.Errorf("invalid path security")
+	}
+
+	// Lstat so an existing symlink is refused instead of being followed (or
+	// silently replaced by the rename that publishes the new content).
+	if info, err := os.Lstat(fullPath); err == nil {
+		if err := saveTargetRefusal(info); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
 	}
 
 	dir := filepath.Dir(fullPath)
@@ -477,16 +498,142 @@ func (v *Vault) SaveNote(notePath string, content string) error {
 	}
 
 	// Python writes UTF-8 string directly
-	if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
+	if err := writeFileAtomic(fullPath, []byte(content), 0644); err != nil {
 		return err
 	}
 	// Refresh the index with what we just wrote so the next scan/search does
 	// not re-read the file, and patch the cached listing in place so the next
 	// request does not have to walk the tree again.
-	if info, err := os.Stat(fullPath); err == nil {
+	if info, err := os.Lstat(fullPath); err == nil {
 		rel := NormalizedRelPath(notePath)
 		tags := v.idx.putNote(rel, info.ModTime(), info.Size(), content)
 		v.scanCache.noteSaved(makeNoteRecord(rel, info, tags))
+	}
+	return nil
+}
+
+// SaveNoteResult reports the outcome of a SaveNoteIfHash call.
+type SaveNoteResult struct {
+	// Saved is true when the note was written during this call.
+	Saved bool
+	// Created is true only when the note did not exist before the write.
+	Created bool
+	// CurrentHash is ContentHash of the note's content after the call: the
+	// content just written when Saved, otherwise the on-disk content that did
+	// not match baseHash (so the caller can rebase and retry).
+	CurrentHash string
+}
+
+// SaveNoteIfHash writes content to notePath only while the on-disk note still
+// matches baseHash, holding v.mu for the whole read-check-write sequence.
+//
+// An empty baseHash keeps the legacy behavior of SaveNote: always save. With a
+// non-empty baseHash the call is compare-and-swap: the caller last read the
+// note as baseHash, and if another writer changed it since, nothing is
+// written and the fresh hash comes back with Saved false.
+func (v *Vault) SaveNoteIfHash(notePath, content, baseHash string) (SaveNoteResult, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	fullPath := v.FullPath(notePath)
+	if !v.ValidatePathSecurity(fullPath) {
+		return SaveNoteResult{}, fmt.Errorf("invalid path security")
+	}
+
+	// Lstat (never Stat) so an existing symlink is refused below instead of
+	// being followed by the read or the later write.
+	info, err := os.Lstat(fullPath)
+	if err != nil && !os.IsNotExist(err) {
+		return SaveNoteResult{}, err
+	}
+	exists := err == nil
+	if err := saveTargetRefusal(info); err != nil {
+		return SaveNoteResult{}, err
+	}
+
+	created := !exists
+	if baseHash != "" && exists {
+		data, err := os.ReadFile(fullPath)
+		if err != nil {
+			return SaveNoteResult{}, err
+		}
+		currentHash := ContentHash(string(data))
+		if currentHash != baseHash {
+			return SaveNoteResult{Saved: false, CurrentHash: currentHash}, nil
+		}
+	}
+
+	if err := v.saveNoteLocked(notePath, content); err != nil {
+		return SaveNoteResult{}, err
+	}
+	return SaveNoteResult{
+		Saved:       true,
+		Created:     created,
+		CurrentHash: ContentHash(content),
+	}, nil
+}
+
+// saveTargetRefusal rejects targets a save must never overwrite: a symlink
+// (writes must not follow it or silently replace it) and anything that is not
+// a plain regular file. A nil info means the target does not exist yet, which
+// is fine for a save.
+func saveTargetRefusal(info os.FileInfo) error {
+	if info == nil {
+		return nil
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refusing to save over a symlink")
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("refusing to save over a non-regular file")
+	}
+	return nil
+}
+
+// writeFileAtomic publishes data at path without ever leaving a partial or
+// empty file behind: the content lands in a temp file in the same directory,
+// is flushed, and is then renamed over the target. On any failure the temp
+// file is removed and the target keeps its previous bytes.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	// removeTmp removes the partially written temp file; Close can already
+	// have succeeded, and a second Close on it is harmless.
+	removeTmp := func() error {
+		if err := tmp.Close(); err != nil {
+			log.Printf("WARNING: closing temp note file %s: %v", tmpName, err)
+		}
+		return os.Remove(tmpName)
+	}
+
+	if err := tmp.Chmod(perm); err != nil {
+		if rmErr := removeTmp(); rmErr != nil {
+			log.Printf("WARNING: removing temp note file %s: %v", tmpName, rmErr)
+		}
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		if rmErr := removeTmp(); rmErr != nil {
+			log.Printf("WARNING: removing temp note file %s: %v", tmpName, rmErr)
+		}
+		return err
+	}
+	// Close has to succeed before the rename: the content has to be flushed
+	// to the name that ends up at the target.
+	if err := tmp.Close(); err != nil {
+		if rmErr := os.Remove(tmpName); rmErr != nil {
+			log.Printf("WARNING: removing temp note file %s: %v", tmpName, rmErr)
+		}
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		if rmErr := os.Remove(tmpName); rmErr != nil {
+			log.Printf("WARNING: removing temp note file %s: %v", tmpName, rmErr)
+		}
+		return err
 	}
 	return nil
 }
@@ -605,10 +752,28 @@ func (v *Vault) DeleteFolder(folderPath string) bool {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
+	clean := filepath.Clean(strings.ReplaceAll(folderPath, "\\", "/"))
+	if folderPath == "" || clean == "." || clean == "/" {
+		return false
+	}
+
 	fullPath := v.FullPath(folderPath)
 	if !v.ValidatePathSecurity(fullPath) {
 		return false
 	}
+
+	// Never remove the vault root itself: a path such as "sub/.." (or one that
+	// empty-resolves) cleans to notesDir, and os.RemoveAll on that would wipe
+	// the whole vault. Compare cleaned absolute paths so every spelling of the
+	// root is caught.
+	if absFull, err := filepath.Abs(fullPath); err == nil {
+		if absBase, err := filepath.Abs(v.notesDir); err == nil {
+			if filepath.Clean(absFull) == filepath.Clean(absBase) {
+				return false
+			}
+		}
+	}
+
 	info, err := os.Stat(fullPath)
 	if err != nil || !info.IsDir() {
 		return false
@@ -676,17 +841,14 @@ func (v *Vault) CreateNoteMetadata(notePath string) NoteMetadata {
 		return NoteMetadata{}
 	}
 
-	info, err := os.Stat(fullPath)
-	if err != nil || info.IsDir() {
+	// Lstat so a symlink masquerading as a note is rejected instead of being
+	// followed out of the vault.
+	info, err := os.Lstat(fullPath)
+	if err != nil || !info.Mode().IsRegular() {
 		return NoteMetadata{}
 	}
 
-	createdTime := info.ModTime()
-	if sys := info.Sys(); sys != nil {
-		if stat, ok := sys.(*syscall.Stat_t); ok {
-			createdTime = time.Unix(stat.Ctim.Sec, stat.Ctim.Nsec)
-		}
-	}
+	created := createdTime(info)
 
 	file, err := os.Open(fullPath)
 	if err != nil {
@@ -694,18 +856,60 @@ func (v *Vault) CreateNoteMetadata(notePath string) NoteMetadata {
 	}
 	defer file.Close()
 
+	return NoteMetadata{
+		Created:  FormatTime(created),
+		Modified: FormatTime(info.ModTime()),
+		Size:     info.Size(),
+		Lines:    countLines(file),
+	}
+}
+
+// metadataLineLimit is the largest line countLines reads as a single line
+// before falling back to a byte count; bufio.Scanner's default is 64 KiB and
+// silently stops there, turning a long line into a truncated count.
+const metadataLineLimit = 1 << 20
+
+// countLines counts lines the way a text editor shows them: every "\n" opens
+// a line, and a final unterminated line still counts as one (empty files have
+// no lines). If even metadataLineLimit is not enough for one line, the file is
+// recounted from the bytes so a pathological note cannot silently report
+// fewer lines than it has.
+func countLines(file *os.File) int {
 	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), metadataLineLimit)
 	lineCount := 0
 	for scanner.Scan() {
 		lineCount++
 	}
-
-	return NoteMetadata{
-		Created:  FormatTime(createdTime),
-		Modified: FormatTime(info.ModTime()),
-		Size:     info.Size(),
-		Lines:    lineCount,
+	if scanner.Err() == nil {
+		return lineCount
 	}
+
+	// The scan hit (or exceeded) the buffer limit: rewind and count "\n"
+	// bytes instead, adding the final unterminated line when the file does
+	// not end with one.
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return lineCount
+	}
+	newlines := 0
+	sawByte := false
+	endsNewline := true
+	var chunk [64 * 1024]byte
+	for {
+		n, readErr := file.Read(chunk[:])
+		if n > 0 {
+			sawByte = true
+			newlines += bytes.Count(chunk[:n], []byte{'\n'})
+			endsNewline = chunk[n-1] == '\n'
+		}
+		if readErr != nil {
+			break
+		}
+	}
+	if sawByte && !endsNewline {
+		newlines++
+	}
+	return newlines
 }
 
 // Media handling
@@ -762,7 +966,9 @@ func (v *Vault) GetAttachmentDir(notePath string) string {
 		return filepath.Join(v.notesDir, "_attachments")
 	}
 	clean := strings.ReplaceAll(notePath, "\\", "/")
-	dir := filepath.Dir(clean)
+	// filepath.Dir returns the platform separator; back to slash form before
+	// splitting so the _attachments check also works segment-wise on Windows.
+	dir := filepath.ToSlash(filepath.Dir(clean))
 	if dir == "." || dir == "" {
 		return filepath.Join(v.notesDir, "_attachments")
 	}
@@ -880,6 +1086,10 @@ func (v *Vault) ScanNotes(includeMedia bool) ([]NoteRecord, []string, error) {
 		parentFolder := filepath.Dir(relStr)
 		if parentFolder == "." {
 			parentFolder = ""
+		} else {
+			// filepath.Dir emits the platform separator; listings are kept in
+			// slash form everywhere so folder paths are cross-platform equal.
+			parentFolder = strings.ReplaceAll(parentFolder, "\\", "/")
 		}
 		stem := strings.TrimSuffix(name, filepath.Ext(name))
 

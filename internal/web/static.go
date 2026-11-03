@@ -43,6 +43,12 @@ func (h *StaticHandler) ServeIndex(w http.ResponseWriter, r *http.Request) {
 	content = strings.ReplaceAll(content, "__APP_VERSION__", url.QueryEscape(h.cfg.App.Version))
 	content = strings.ReplaceAll(content, "__DEFAULT_THEME__", h.cfg.UI.DefaultTheme)
 
+	// Inline the shipped locale's translations (see __PRELOADED_TRANSLATIONS__
+	// in index.html) so the document arrives with its translations already
+	// embedded instead of the page issuing a synchronous XHR before Alpine
+	// initializes. Done before the ETag so the hash covers the final bytes.
+	content = renderPreloadedTranslations(h.assetsFS, content)
+
 	hasher := sha256.New()
 	hasher.Write([]byte(content))
 	etag := fmt.Sprintf(`"%s"`, hex.EncodeToString(hasher.Sum(nil))[:16])
@@ -57,6 +63,29 @@ func (h *StaticHandler) ServeIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("ETag", etag)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(content))
+}
+
+// renderPreloadedTranslations replaces the __PRELOADED_TRANSLATIONS__ placeholder
+// in index.html with the pt-BR locale JSON (the only shipped locale; the page is
+// already lang="pt-BR"). json.Marshal HTML-escapes <, > and & inside
+// strings, so even a translation containing a closing script tag cannot break
+// out of the embedding <script> block. On any error the placeholder becomes an
+// empty object, keeping Alpine's translations an object so t() can walk it.
+func renderPreloadedTranslations(assetsFS fs.FS, content string) string {
+	var translations any
+	if data, err := fs.ReadFile(assetsFS, "locales/pt-BR.json"); err == nil {
+		if err := json.Unmarshal(data, &translations); err != nil {
+			translations = nil
+		}
+	}
+	if translations == nil {
+		translations = map[string]any{}
+	}
+	encoded, err := json.Marshal(translations)
+	if err != nil {
+		encoded = []byte("{}")
+	}
+	return strings.ReplaceAll(content, "__PRELOADED_TRANSLATIONS__", string(encoded))
 }
 
 func (h *StaticHandler) ServeManifest(w http.ResponseWriter, r *http.Request) {

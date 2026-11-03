@@ -30,58 +30,34 @@
          browser at runtime. The stylesheet <link> itself sits at the end of
          <head>, matching the cascade position the CDN's runtime <style> had. -->
     
-    <!-- Preload translations before Alpine initializes -->
+    <!-- Translations are embedded server-side: ServeIndex replaces
+         __PRELOADED_TRANSLATIONS__ with the pt-BR locale JSON (the page's
+         lang and only shipped locale), so the document arrives with its
+         translations already in place and no synchronous XHR is needed
+         before Alpine initializes. -->
+    <script>window.__preloadedTranslations = __PRELOADED_TRANSLATIONS__;</script>
+
+    <!-- Theme: a blocking stylesheet <link> still resolves before first paint,
+         so a reload never flashes the wrong theme. The tiny script below points
+         it at the saved preference, falling back to the configured default
+         (__DEFAULT_THEME__), without a synchronous XHR. app.js reuses
+         #theme-stylesheet and skips a second download when data-theme already
+         matches the requested id. -->
+    <link id="theme-stylesheet" rel="stylesheet" href="/api/themes/__DEFAULT_THEME__">
     <script>
         (function() {
-            // Load translations synchronously to ensure they're available before Alpine renders
-            const locale = localStorage.getItem('locale') || 'pt-BR';
-            const xhr = new XMLHttpRequest();
-            xhr.open('GET', '/api/locales/' + locale, false); // Synchronous request
             try {
-                xhr.send();
-                if (xhr.status === 200) {
-                    window.__preloadedTranslations = JSON.parse(xhr.responseText);
-                } else {
-                    // Fallback to pt-BR if preferred locale fails
-                    if (locale !== 'pt-BR') {
-                        xhr.open('GET', '/api/locales/pt-BR', false);
-                        xhr.send();
-                        if (xhr.status === 200) {
-                            window.__preloadedTranslations = JSON.parse(xhr.responseText);
-                            localStorage.setItem('locale', 'pt-BR');
-                        }
+                const saved = localStorage.getItem('noteDiscoveryTheme') || '__DEFAULT_THEME__';
+                document.documentElement.setAttribute('data-theme', saved);
+                if (saved !== '__DEFAULT_THEME__') {
+                    const link = document.getElementById('theme-stylesheet');
+                    if (link) {
+                        link.href = '/api/themes/' + encodeURIComponent(saved);
                     }
                 }
             } catch (e) {
-                console.error('Failed to preload translations:', e);
-                window.__preloadedTranslations = {};
-            }
-        })();
-    </script>
-    
-    <!-- Preload the theme before Alpine renders, so a reload doesn't flash.
-         A saved preference wins; otherwise the configured default (__DEFAULT_THEME__).
-         data-theme is set only after the CSS is parsed and inserted. app.js reuses
-         #dynamic-theme and skips a second download when the id still matches. -->
-    <script>
-        (function() {
-            try {
-                const themeId = localStorage.getItem('noteDiscoveryTheme') || '__DEFAULT_THEME__';
-                if (!themeId) return;
-                const xhr = new XMLHttpRequest();
-                xhr.open('GET', '/api/themes/' + encodeURIComponent(themeId), false);
-                xhr.send();
-                if (xhr.status !== 200) return;
-                const css = JSON.parse(xhr.responseText).css;
-                if (typeof css !== 'string' || !css) return;
-                const styleEl = document.createElement('style');
-                styleEl.id = 'dynamic-theme';
-                styleEl.textContent = css;
-                document.head.appendChild(styleEl);
-                document.documentElement.setAttribute('data-theme', themeId);
-            } catch (e) {
                 // Fall back to the normal async applyTheme() path in app.js
-                console.error('Failed to preload theme:', e);
+                console.error('Failed to apply saved theme:', e);
             }
         })();
     </script>
@@ -133,9 +109,6 @@
     <!-- Mermaid and vis-network are not loaded here: renderMermaid() imports
          Mermaid on first diagram and initGraph() loads vis-network when the
          graph overlay opens for the first time. -->
-    
-    <!-- Theme styles will be loaded dynamically -->
-    <link rel="stylesheet" id="theme-stylesheet" href="">
     
     <!-- Shared with HTML export / public shares so they match the live preview -->
     <link rel="stylesheet" href="/static/markdown-preview.css?v=__APP_VERSION__">

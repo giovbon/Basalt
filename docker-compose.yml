@@ -1,12 +1,12 @@
 services:
-  notediscovery:
+  basalt:
     # Para usar a imagem publicada no Docker Hub:
-    # image: SEU_USUARIO_DOCKERHUB/notediscovery:latest
+    # image: giovbon/basalt:latest
     # Ou para compilar localmente:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: notediscovery
+    container_name: basalt
     restart: unless-stopped
     ports:
       - "8000:8000"
@@ -16,7 +16,7 @@ services:
       # Cache do índice (gob) dentro do volume montado: o boot volta quente
       # após restarts do container. O arquivo é um cache descartável.
       - INDEX_FILE=/app/data/.basalt-index.gob
-      - APP_NAME=NoteDiscovery
+      - APP_NAME=Basalt
       - DEFAULT_THEME=light
       # Autenticação opcional:
       # - AUTHENTICATION_ENABLED=true

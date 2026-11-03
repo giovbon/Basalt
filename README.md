@@ -7,7 +7,7 @@ Esta versão possui o **backend totalmente reescrito em Go**, mantendo paridade 
 ## Como Rodar Localmente
 
 ### Pré-requisitos
-- [Go](https://go.dev/) 1.22 ou superior instalado.
+- [Go](https://go.dev/) 1.23 ou superior instalado.
 
 ### Executando com o script facilitador
 
@@ -43,7 +43,7 @@ o CSS e commite junto com a mudança:
 
 ### Usando o `docker-compose.yml`
 
-Para subir o NoteDiscovery com persistência das suas notas na pasta `./data`:
+Para subir o Basalt com persistência das suas notas na pasta `./data`:
 
 ```bash
 docker compose up -d
@@ -60,11 +60,11 @@ docker compose down
 
 ```yaml
 services:
-  notediscovery:
+  basalt:
     image: giovbon/basalt:latest
     # Ou para construir a partir do código fonte:
     # build: .
-    container_name: notediscovery
+    container_name: basalt
     restart: unless-stopped
     ports:
       - "8000:8000"
@@ -85,11 +85,11 @@ services:
 
 ```bash
 docker run -d \
-  --name notediscovery \
+  --name basalt \
   -p 8000:8000 \
   -v $(pwd)/data:/app/data \
   -e APP_NAME="Basalt" \
-  SEU_USUARIO_DOCKERHUB/notediscovery:latest
+  giovbon/basalt:latest
 ```
 
 ## Variáveis de Ambiente Suportadas
