@@ -497,7 +497,11 @@
         
         .folder-item.drag-over {
             background-color: var(--accent-light) !important;
-            border: 2px dashed var(--accent-primary) !important;
+            /* outline instead of border: the highlight must not resize the row
+               mid-drag, or the rows below shift under the cursor and the drop
+               lands on the wrong element. */
+            outline: 2px dashed var(--accent-primary);
+            outline-offset: -2px;
         }
         
         .folder-expanded {
@@ -1689,7 +1693,7 @@
                                 @dragover.prevent="if(draggedItem) dragOverFolder = '';"
                                 @dragenter.prevent="if(draggedItem) dragOverFolder = '';"
                                 @dragleave="if(draggedItem) dragOverFolder = null;"
-                                @drop="if(draggedItem) onFolderDrop('')"
+                                @drop.prevent="if(draggedItem) onFolderDrop('')"
                                 style="height: 28px; line-height: 20px; display: flex; align-items: center; justify-content: center;"
                             >
                                 <span x-show="!draggedItem" x-text="t('sidebar.drag_hint')"></span>

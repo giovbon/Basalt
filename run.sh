@@ -54,7 +54,30 @@ free_port "$PORT"
 mkdir -p data
 
 echo "Compilando Basalt..."
-go build -o basalt ./cmd/basalt
+build_basalt() {
+    go build -o basalt ./cmd/basalt
+}
+
+# go.mod exige Go 1.23+. Se o Go instalado for mais antigo, o próprio Go tenta
+# baixar o toolchain exigido; quando esse download não está disponível, usa um
+# toolchain que já esteja no cache de módulos em vez de abortar.
+if ! build_basalt; then
+    # GOTOOLCHAIN=local: entra em go.mod com o Go instalado, sem tentar trocar de
+    # toolchain (é justamente essa troca que falhou acima).
+    module_cache=$(GOTOOLCHAIN=local go env GOMODCACHE 2>/dev/null)
+    cached_toolchain=$(ls -d "${module_cache:-$HOME/go/pkg/mod}"/golang.org/toolchain@v0.0.1-go* 2>/dev/null \
+        | sed -e 's|.*toolchain@v0\.0\.1-||' -e 's|\.[a-z0-9]*-[a-z0-9]*$||' \
+        | sort -uV | tail -1)
+    if [ -n "$cached_toolchain" ]; then
+        echo "Go local não atende ao go.mod; usando toolchain em cache: ${cached_toolchain}"
+        GOTOOLCHAIN="$cached_toolchain" build_basalt
+    else
+        echo "" >&2
+        echo "Erro: o go.mod exige Go 1.23 ou superior e o download do toolchain falhou." >&2
+        echo "Instale o Go 1.23+ (ou libere o download de toolchains) e rode de novo." >&2
+        exit 1
+    fi
+fi
 
 echo "Servidor pronto!"
 echo "Acesse no navegador: http://localhost:${PORT}"

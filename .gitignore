@@ -7,3 +7,5 @@ test_data/
 *.exe
 *.test
 .DS_Store
+
+.basalt-index.gob

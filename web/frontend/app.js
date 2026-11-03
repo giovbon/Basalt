@@ -2571,7 +2571,14 @@ function noteApp() {
             this.toggleFolder(el.dataset.path);
         },
         handleFolderDragOver(el, event) {
+            // Only sidebar items can be moved between folders. Ignoring other
+            // drags (OS files) leaves the folder a non-drop target instead of
+            // swallowing the drop and doing nothing.
+            if (!this.draggedItem) return;
             event.preventDefault();
+            // A leftover 'editor' target (from dragging across the editor)
+            // must not make onFolderDrop ignore this drop.
+            this.dropTarget = null;
             this.dragOverFolder = el.dataset.path;
             el.classList.add('drag-over');
         },
@@ -2580,8 +2587,12 @@ function noteApp() {
             el.classList.remove('drag-over');
         },
         handleFolderDrop(el, event) {
+            // preventDefault marks the drop as handled; without it the browser
+            // applies its default action to the dragged item.
+            event.preventDefault();
             event.stopPropagation();
             el.classList.remove('drag-over');
+            this.dragOverFolder = null;
             this.onFolderDrop(el.dataset.path);
         },
         handleNewItemClick(el, event) {
@@ -4082,11 +4093,6 @@ function noteApp() {
         },
         
         async onFolderDrop(targetFolderPath) {
-            // Ignore if we're dropping into the editor
-            if (this.dropTarget === 'editor') {
-                return;
-            }
-            
             // Capture dragged item info immediately (ondragend may clear it)
             if (!this.draggedItem) return;
             const { path: draggedPath, type: draggedType } = this.draggedItem;
@@ -4145,6 +4151,9 @@ function noteApp() {
                         const errorData = await response.json().catch(() => ({}));
                         throw new Error(errorData.detail || this.t('move.failed_folder'));
                     }
+                    // Re-read the vault so the sidebar matches disk even if the
+                    // optimistic tree above missed something (no page reload needed).
+                    await this.loadNotes({ silent: true });
                 } catch (error) {
                     console.error('Failed to move folder:', error);
                     this.toast(error.message || this.t('move.failed_folder'), { type: 'error' });
@@ -4189,6 +4198,9 @@ function noteApp() {
                     const errorKey = isMedia ? 'move.failed_media' : 'move.failed_note';
                     throw new Error(errorData.detail || this.t(errorKey));
                 }
+                // Re-read the vault so the sidebar matches disk even if the
+                // optimistic tree above missed something (no page reload needed).
+                await this.loadNotes({ silent: true });
             } catch (error) {
                 console.error(`Failed to move ${isMedia ? 'media' : 'note'}:`, error);
                 this.toast(error.message || this.t(isMedia ? 'move.failed_media' : 'move.failed_note'), { type: 'error' });
