@@ -11,6 +11,7 @@ const CONFIG = {
     SCROLL_SYNC_DELAY: 50,             // ms - Delay to prevent scroll sync interference
     SCROLL_SYNC_MAX_RETRIES: 10,       // Maximum attempts to find editor/preview elements
     SCROLL_SYNC_RETRY_INTERVAL: 100,   // ms - Time between setupScrollSync retries
+    LINK_PREVIEW_DELAY: 600,           // ms - Hover time before a link's preview card appears, long enough to move the cursor and click the link first
     MAX_UNDO_HISTORY: 50,              // Maximum number of undo steps to keep
     DEFAULT_SIDEBAR_WIDTH: 256,        // px - Default sidebar width (w-64 in Tailwind)
     TOAST_MAX_VISIBLE: 4,              // Max stacked toasts; oldest dropped when exceeded
@@ -3742,12 +3743,17 @@ function noteApp() {
                 return;
             }
 
+            // Moving to a different link: drop the previous card right away
+            // instead of showing the old link's content while the new delay
+            // runs.
+            if (this._linkPreviewAnchor) this._hideLinkPreview();
+
             clearTimeout(this._linkPreviewTimer);
             clearTimeout(this._linkPreviewHideTimer);
             this._linkPreviewAnchor = link;
             this._linkPreviewTimer = setTimeout(() => {
                 this._showLinkPreview(link, target);
-            }, 220);
+            }, CONFIG.LINK_PREVIEW_DELAY);
         },
 
         _scheduleLinkPreviewHide() {
