@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io/fs"
+	"log"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -84,6 +85,13 @@ type Vault struct {
 	mu        sync.RWMutex
 	idx       *Index
 	scanCache *scanCache
+
+	// watch mirrors external filesystem changes into the caches (nil until
+	// StartWatching succeeds); persist writes the index back to disk (nil
+	// until StartIndexPersistence). Both are torn down by Close.
+	watch     *vaultWatcher
+	persist   *indexPersistence
+	closeOnce sync.Once
 }
 
 func New(notesDir string) *Vault {
@@ -101,6 +109,35 @@ func (v *Vault) NotesDir() string {
 // EnsureDirectories creates the root notesDir if it does not exist
 func (v *Vault) EnsureDirectories() error {
 	return os.MkdirAll(v.notesDir, 0755)
+}
+
+// Close tears down the background services (file watcher, index persistence)
+// and flushes any pending index state to disk. Safe to call more than once.
+//
+// It must not run while holding v.mu: the watcher's event loop takes v.mu
+// (read) per event and stop() waits for that loop to exit.
+func (v *Vault) Close() {
+	v.closeOnce.Do(func() {
+		v.mu.Lock()
+		w := v.watch
+		v.watch = nil
+		p := v.persist
+		v.persist = nil
+		v.mu.Unlock()
+
+		if w != nil {
+			w.stop()
+		}
+		if p != nil {
+			p.halt() // no save can be running after this line
+			if v.idx.dirty.Swap(false) {
+				if err := p.save(v); err != nil {
+					v.idx.dirty.Store(true) // lost only the final flush attempt
+					log.Printf("WARNING: saving index cache: %v", err)
+				}
+			}
+		}
+	})
 }
 
 // ValidatePathSecurity checks that resolved path is safely inside notesDir
@@ -772,13 +809,15 @@ func (v *Vault) SaveUploadedImage(notePath string, filename string, data []byte)
 //
 // The walk result itself is cached (see scanCache), so listings, tags, search,
 // stats and the graph do not re-walk the tree on every request: the snapshot
-// is served until an app write invalidates it or it expires after scanCacheTTL
-// — the expiry is what picks up edits made outside the app. When a walk does
-// run, note contents are only re-read for files whose (mtime, size) changed
-// since the last scan — see Index. The only stale window is an external
-// rewrite that preserves both mtime and size (same-second, same-length edit),
-// which the app's own writes never produce because SaveNote refreshes the
-// entry with the content it wrote.
+// is served until an app write invalidates it, a watcher event patches it, or
+// it expires after the scan TTL — whichever comes first. The TTL is the safety
+// net for changes no event reported (no watcher, or a filesystem without
+// inotify). When a walk does run, note contents are only re-read for files
+// whose (mtime, size) changed since the last scan — see Index. The only stale
+// window without a watcher is an external rewrite that preserves both mtime
+// and size (same-second, same-length edit), which the app's own writes never
+// produce because SaveNote refreshes the entry with the content it wrote; a
+// watcher event closes even that window by forcing the re-read.
 //
 // The stored snapshot always contains media records; includeMedia decides
 // whether this caller receives them, and the returned slices are copies the
@@ -787,7 +826,7 @@ func (v *Vault) ScanNotes(includeMedia bool) ([]NoteRecord, []string, error) {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 
-	if cached, folders, ok := v.scanCache.get(includeMedia); ok {
+	if cached, folders, ok := v.scanCache.get(includeMedia, v.scanTTL()); ok {
 		return cached, folders, nil
 	}
 

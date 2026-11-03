@@ -34,12 +34,14 @@ type scanCache struct {
 	folders []string     // sorted, like the walk returns them
 }
 
-// get returns copies of the cached walk when it is still usable.
-func (c *scanCache) get(includeMedia bool) (notes []NoteRecord, folders []string, ok bool) {
+// get returns copies of the cached walk when it is still usable within ttl.
+// The caller (ScanNotes) supplies the ttl because only the vault knows whether
+// a healthy watcher is patching the snapshot as events arrive.
+func (c *scanCache) get(includeMedia bool, ttl time.Duration) (notes []NoteRecord, folders []string, ok bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if !c.valid || c.stale || time.Since(c.at) >= scanCacheTTL {
+	if !c.valid || c.stale || time.Since(c.at) >= ttl {
 		return nil, nil, false
 	}
 

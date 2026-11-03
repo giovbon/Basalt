@@ -85,10 +85,17 @@ func (e *indexEntry) matches(mtime time.Time, size int64) bool {
 // changed are read and re-parsed.
 //
 // All Index methods are called while the owning Vault holds its lock; Index
-// carries its own mutex because readers run concurrently under RLock.
+// carries its own mutex because readers run concurrently under RLock. The one
+// exception is the persistence loop, which reads a self-consistent copy via
+// snapshot() under ix.mu only — it never needs v.mu, so a save can run while
+// requests keep serving.
 type Index struct {
 	mu      sync.RWMutex
 	entries map[string]*indexEntry
+
+	// dirty records that entries changed since the last successful disk
+	// write; the persistence loop flushes only while it is set.
+	dirty atomic.Bool
 
 	// contentBytes is the total size of cached note contents.
 	contentBytes int64
@@ -174,6 +181,7 @@ func (ix *Index) putNote(rel string, mtime time.Time, size int64, content string
 		e.content = ""
 	}
 	ix.entries[rel] = e
+	ix.dirty.Store(true)
 	return tags
 }
 
@@ -191,6 +199,7 @@ func (ix *Index) putMedia(rel, name, folder, mediaType string, mtime time.Time, 
 		folder: folder,
 		typ:    mediaType,
 	}
+	ix.dirty.Store(true)
 }
 
 // releaseEntryLocked drops both cached payloads of an entry and returns their
@@ -318,6 +327,11 @@ func (ix *Index) cacheContent(rel string, mtime time.Time, size int64, content s
 		e.tags = ParseTags(content)
 		e.wikiLinks, e.mdLinks = extractOutLinks(content)
 		e.hasLinks = true
+		// Every path that reached this point either created the entry or
+		// (stale) released it — releaseEntryLocked clears hasLinks — so the
+		// persisted fields changed. A plain content-cache hit on an intact
+		// entry returns above and stays clean.
+		ix.dirty.Store(true)
 	}
 
 	if int64(len(content)) > contentCacheMaxBytes {
@@ -408,6 +422,7 @@ func (ix *Index) drop(rel string) {
 	if e, ok := ix.entries[rel]; ok {
 		ix.releaseEntryLocked(e)
 		delete(ix.entries, rel)
+		ix.dirty.Store(true)
 	}
 }
 
@@ -420,6 +435,7 @@ func (ix *Index) dropPrefix(prefix string) {
 		if prefix == "" || k == prefix || (len(k) > len(prefix) && k[:len(prefix)] == prefix && k[len(prefix)] == '/') {
 			ix.releaseEntryLocked(e)
 			delete(ix.entries, k)
+			ix.dirty.Store(true)
 		}
 	}
 }
@@ -433,6 +449,62 @@ func (ix *Index) prune(seen map[string]struct{}) {
 		if _, ok := seen[k]; !ok {
 			ix.releaseEntryLocked(e)
 			delete(ix.entries, k)
+			ix.dirty.Store(true)
+		}
+	}
+}
+
+// snapshot copies the persisted projection of every entry (see persistedEntry)
+// under a single read lock, giving the persistence loop a self-consistent view
+// without needing the vault lock. Content and folded text are excluded: they
+// are the large, cheaply derivable halves of the cache.
+func (ix *Index) snapshot() []persistedEntry {
+	ix.mu.RLock()
+	defer ix.mu.RUnlock()
+
+	out := make([]persistedEntry, 0, len(ix.entries))
+	for rel, e := range ix.entries {
+		out = append(out, persistedEntry{
+			Rel:       rel,
+			MTime:     e.mtime,
+			Size:      e.size,
+			Name:      e.name,
+			Folder:    e.folder,
+			Typ:       e.typ,
+			Tags:      e.tags,
+			IsNote:    e.isNote,
+			HasLinks:  e.hasLinks,
+			WikiLinks: e.wikiLinks,
+			MdLinks:   e.mdLinks,
+		})
+	}
+	return out
+}
+
+// restore replaces the index with the entries read from disk. Content and
+// folded text start empty by design (they were never persisted): a restored
+// note still needs to be read once before search can match it, but listings,
+// tags and backlinks answer immediately. Callers only invoke this on a fresh
+// index, right after loading the file and before the first scan.
+func (ix *Index) restore(entries []persistedEntry) {
+	ix.mu.Lock()
+	defer ix.mu.Unlock()
+
+	ix.entries = make(map[string]*indexEntry, len(entries))
+	ix.contentBytes = 0
+	ix.foldedBytes = 0
+	for _, p := range entries {
+		ix.entries[p.Rel] = &indexEntry{
+			mtime:     p.MTime,
+			size:      p.Size,
+			name:      p.Name,
+			folder:    p.Folder,
+			typ:       p.Typ,
+			tags:      p.Tags,
+			isNote:    p.IsNote,
+			wikiLinks: p.WikiLinks,
+			mdLinks:   p.MdLinks,
+			hasLinks:  p.HasLinks,
 		}
 	}
 }

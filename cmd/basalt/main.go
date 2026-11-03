@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"syscall"
 	"time"
@@ -45,10 +46,27 @@ func run() error {
 	if err := v.EnsureDirectories(); err != nil {
 		return fmt.Errorf("creating notes directory %q: %w", cfg.Storage.NotesDir, err)
 	}
+	defer v.Close() // stops watcher/persistence and flushes the index cache
+
 	if !isWritable(cfg.Storage.NotesDir) {
 		log.Printf("WARNING: notes directory %q is not writable by the current user - "+
 			"notes and uploads will fail (check ownership/permissions, e.g. "+
 			"'chown -R 10001:10001 %s' when running in Docker)", cfg.Storage.NotesDir, cfg.Storage.NotesDir)
+	}
+
+	// Best effort: without change events (drvfs under WSL, some Docker Desktop
+	// binds) the vault keeps working on the plain scan TTL, which is exactly
+	// how it behaved before watchers existed.
+	if err := v.StartWatching(); err != nil {
+		log.Printf("WARNING: file watcher disabled: %v (external edits may take up to %s to appear)",
+			err, 2*time.Second)
+	}
+
+	// The index cache lives next to config.yaml, not inside the vault: the
+	// .md files stay the only source of truth. Mount that directory as a
+	// volume in Docker to keep the warm index across restarts.
+	if err := v.StartIndexPersistence(filepath.Join(filepath.Dir(configFile), ".basalt-index.gob")); err != nil {
+		log.Printf("WARNING: index cache not loaded: %v (it will be rebuilt from the notes)", err)
 	}
 
 	sess := session.NewManager(
