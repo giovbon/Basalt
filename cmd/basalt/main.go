@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strconv"
 	"syscall"
 	"time"
@@ -62,10 +61,11 @@ func run() error {
 			err, 2*time.Second)
 	}
 
-	// The index cache lives next to config.yaml, not inside the vault: the
-	// .md files stay the only source of truth. Mount that directory as a
-	// volume in Docker to keep the warm index across restarts.
-	if err := v.StartIndexPersistence(filepath.Join(filepath.Dir(configFile), ".basalt-index.gob")); err != nil {
+	// The index cache lives next to config.yaml by default (override with
+	// INDEX_FILE), never polluting the vault: the .md files stay the only
+	// source of truth. In Docker point it at a mounted volume to keep the
+	// warm index across restarts.
+	if err := v.StartIndexPersistence(cfg.Storage.IndexFile); err != nil {
 		log.Printf("WARNING: index cache not loaded: %v (it will be rebuilt from the notes)", err)
 	}
 

@@ -13,6 +13,9 @@ services:
     environment:
       - PORT=8000
       - NOTES_DIR=/app/data
+      # Cache do índice (gob) dentro do volume montado: o boot volta quente
+      # após restarts do container. O arquivo é um cache descartável.
+      - INDEX_FILE=/app/data/.basalt-index.gob
       - APP_NAME=NoteDiscovery
       - DEFAULT_THEME=light
       # Autenticação opcional:

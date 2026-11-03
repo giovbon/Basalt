@@ -21,14 +21,14 @@ type Config struct {
 	Authentication AuthenticationConfig `yaml:"authentication"`
 
 	// Derived / runtime config
-	DemoMode        bool   `yaml:"-"`
-	AlreadyDonated  bool   `yaml:"-"`
-	UploadMaxImage  int64  `yaml:"-"`
-	UploadMaxAudio  int64  `yaml:"-"`
-	UploadMaxVideo  int64  `yaml:"-"`
-	UploadMaxPdf    int64  `yaml:"-"`
-	UploadMaxNoteMb int    `yaml:"-"`
-	ArchiveMaxMb    int    `yaml:"-"`
+	DemoMode        bool  `yaml:"-"`
+	AlreadyDonated  bool  `yaml:"-"`
+	UploadMaxImage  int64 `yaml:"-"`
+	UploadMaxAudio  int64 `yaml:"-"`
+	UploadMaxVideo  int64 `yaml:"-"`
+	UploadMaxPdf    int64 `yaml:"-"`
+	UploadMaxNoteMb int   `yaml:"-"`
+	ArchiveMaxMb    int   `yaml:"-"`
 }
 
 type AppConfig struct {
@@ -46,6 +46,9 @@ type ServerConfig struct {
 
 type StorageConfig struct {
 	NotesDir string `yaml:"notes_dir"`
+	// IndexFile is the gob cache of the note index (disposable; the .md files
+	// remain the source of truth). Empty means "next to config.yaml".
+	IndexFile string `yaml:"index_file"`
 }
 
 type SearchConfig struct {
@@ -146,6 +149,21 @@ func Load(configPath, versionPath string) (*Config, error) {
 	} else {
 		log.Printf("Notes directory: %s (from config.yaml)", cfg.Storage.NotesDir)
 	}
+
+	// Index cache location: INDEX_FILE env var > storage.index_file > next to
+	// config.yaml. The file is a disposable cache derived from the .md files;
+	// in Docker point it at a mounted volume (e.g. INDEX_FILE=/app/data/.basalt-index.gob)
+	// so the warm index survives container restarts.
+	idxSource := "config.yaml"
+	if idxFile := strings.TrimSpace(os.Getenv("INDEX_FILE")); idxFile != "" {
+		cfg.Storage.IndexFile = idxFile
+		idxSource = "INDEX_FILE env var"
+	}
+	if cfg.Storage.IndexFile == "" {
+		cfg.Storage.IndexFile = filepath.Join(filepath.Dir(configPath), ".basalt-index.gob")
+		idxSource = "default (next to config.yaml)"
+	}
+	log.Printf("Index cache: %s (from %s)", cfg.Storage.IndexFile, idxSource)
 
 	// 4. UI: DEFAULT_THEME
 	themeSource := "config.yaml"

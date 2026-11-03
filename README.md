@@ -100,6 +100,7 @@ Todas as variáveis podem ser definidas no ambiente ou via `docker-compose.yml`:
 | :--- | :--- | :--- |
 | `PORT` | `8000` | Porta HTTP em que o servidor escutará. |
 | `NOTES_DIR` | `./data` | Diretório onde as notas e anexos são armazenados. |
+| `INDEX_FILE` | `.basalt-index.gob` ao lado do `config.yaml` | Caminho do cache do índice (gob, descartável). Em Docker, aponte para um volume montado (ex.: `/app/data/.basalt-index.gob`) para manter o índice quente entre restarts. |
 | `APP_NAME` | `Basalt` | Nome exibido na interface e no título da aba. |
 | `DEFAULT_THEME` | `light` | Tema inicial (`light`, `dark`, `dracula`, `nord`, etc.). |
 | `AUTOSAVE_DELAY_MS` | `1000` | Debounce de salvamento automático (250ms a 60000ms). |

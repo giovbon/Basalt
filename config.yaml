@@ -20,6 +20,10 @@ server:
 
 storage:
   notes_dir: "./data"
+  # Cache do índice em gob (descartável; as notas .md continuam sendo a
+  # fonte da verdade). Vazio = gravado ao lado do config.yaml.
+  # No Docker use a env INDEX_FILE para apontar a um volume montado.
+  # index_file: "./.basalt-index.gob"
   
 search:
   enabled: true
