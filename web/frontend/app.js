@@ -394,6 +394,9 @@ function noteApp() {
 
         // Scroll sync state
         isScrolling: false,
+        // performance.now() until which scroll events come from programmatic
+        // writes (search jump) and must not be mirrored between panes.
+        _scrollSyncSuppressUntil: 0,
         
         // Unified drag state for notes, folders, and media
         draggedItem: null,  // { path: string, type: 'note' | 'folder' | 'image' | 'audio' | 'video' | 'document' }
@@ -727,7 +730,8 @@ function noteApp() {
                     // Navigating to a note
                     const searchQuery = e.state.searchQuery || '';
                     const targetLine = e.state.targetLine || null;
-                    this.loadNote(e.state.notePath, false, searchQuery, targetLine); // false = don't update history
+                    const targetColumn = e.state.targetColumn || null;
+                    this.loadNote(e.state.notePath, false, searchQuery, targetLine, targetColumn); // false = don't update history
                     
                     // Update search box and trigger search if needed
                     if (searchQuery) {
@@ -816,8 +820,7 @@ function noteApp() {
                     // Re-apply highlights after content changes (with small delay for render)
                     this.$nextTick(() => {
                         setTimeout(() => {
-                            // Don't focus editor during content changes (false)
-                            this.highlightSearchTerm(this.currentSearchHighlight, false);
+                            this._reapplySearchHighlights();
                         }, 50);
                     });
                 }
@@ -1760,6 +1763,7 @@ function noteApp() {
             if (this.wikilinkAutocomplete.items.length === 0) { this.wlClose(); return; }
             this.wikilinkAutocomplete.activeIndex = 0;
             this.wikilinkAutocomplete.open = true;
+            this._wlPosRetries = 0;
             this.$nextTick(() => this.wlUpdatePosition());
         },
 
@@ -1881,18 +1885,48 @@ function noteApp() {
         },
 
         // Position the popup just below the caret, clamped to the viewport.
+        // The suggestion count varies with the query (1-8 rows), so the popup's
+        // real size is measured from the DOM instead of guessed: a fixed guess
+        // made the flip-to-above math place the popup a fixed distance above the
+        // caret, leaving a visible gap whenever the list was shorter than the
+        // guess (the popup then floated well above the [[ being typed).
         wlUpdatePosition() {
             const textarea = document.getElementById('note-editor');
             if (!textarea) return;
+            const popup = document.getElementById('wikilink-autocomplete');
             const coords = this.wlCaretCoords(textarea, textarea.selectionStart);
 
-            const POPUP_W = 360;
-            const POPUP_H = 8 * 30 + 8; // rough height for up to 8 rows
+            // On the tick the popup opens it can still be display:none, in which
+            // case the rect is all zeros: fall back to a conservative estimate so
+            // it never flashes at the top of the window, then re-measure on the
+            // next frame once it is rendered.
+            const pRect = popup ? popup.getBoundingClientRect() : null;
+            const measured = !!(pRect && pRect.height);
+            const popupW = measured ? pRect.width : 240;
+            const popupH = measured ? pRect.height : 200;
+
             let left = coords.left;
+            if (left + popupW > window.innerWidth - 4) left = window.innerWidth - popupW - 4;
+            if (left < 4) left = 4;
+
+            // Below the caret line by default; flip above only when it really
+            // does not fit below, and only as high as its own height requires.
             let top = coords.top;
-            if (left + POPUP_W > window.innerWidth) left = Math.max(4, window.innerWidth - POPUP_W - 4);
-            if (top + POPUP_H > window.innerHeight) top = Math.max(4, coords.top - coords.height - POPUP_H);
+            if (popupH > window.innerHeight - top - 4) {
+                const above = coords.top - coords.height - popupH;
+                if (above >= 4) top = above;
+            }
+            if (top < 4) top = 4;
+
             this.wikilinkAutocomplete.position = { top, left };
+
+            if (!measured && this.wikilinkAutocomplete.open && (this._wlPosRetries || 0) < 3) {
+                this._wlPosRetries = (this._wlPosRetries || 0) + 1;
+                requestAnimationFrame(() => {
+                    if (this.wikilinkAutocomplete.open) this.wlUpdatePosition();
+                });
+            }
+            if (measured) this._wlPosRetries = 0;
         },
 
         // Caret pixel coordinates inside a textarea via a hidden mirror element.
@@ -2132,8 +2166,14 @@ function noteApp() {
                     }
                     this.expandedSearchResults = expanded;
                     
-                    // Highlight search term in current note if open
-                    if (this.currentNote && this.noteContent) {
+                    // Highlight the term in the note that is already open.
+                    // Skip when this exact query is already showing: a note
+                    // opened from a result (or a reload of
+                    // ?search=&line=&col=) highlights the clicked occurrence
+                    // itself, and running this pass again would reset it to
+                    // the first match and scroll away from it.
+                    if (this.currentNote && this.noteContent
+                        && (this.currentSearchHighlight || '') !== (this.searchQuery || '')) {
                         this.currentSearchHighlight = this.searchQuery;
                         this.$nextTick(() => {
                             this.highlightSearchTerm(this.searchQuery, false);
@@ -3344,14 +3384,14 @@ function noteApp() {
         },
         
         // Open a note or media file (unified handler for sidebar/homepage clicks)
-        openItem(path, type = 'note', searchHighlight = '', targetLine = null) {
+        openItem(path, type = 'note', searchHighlight = '', targetLine = null, targetColumn = null) {
             this.showGraph = false;
             // Check if it's a media file by type or extension
             const mediaType = type !== 'note' ? type : this.getMediaType(path);
             if (mediaType && mediaType !== 'note') {
                 this.viewMedia(path, mediaType);
             } else {
-                this.loadNote(path, true, searchHighlight, targetLine);
+                this.loadNote(path, true, searchHighlight, targetLine, targetColumn);
             }
         },
         
@@ -4133,9 +4173,10 @@ function noteApp() {
         },
         
         
-        // Load a specific note. targetLine is the 1-based source line to focus
-        // when the note was opened from a specific search occurrence.
-        async loadNote(notePath, updateHistory = true, searchQuery = '', targetLine = null) {
+        // Load a specific note. targetLine/targetColumn are the 1-based position
+        // of the occurrence to focus when the note was opened from a search
+        // result (a line can hold more than one occurrence of the term).
+        async loadNote(notePath, updateHistory = true, searchQuery = '', targetLine = null, targetColumn = null) {
             try {
                 // Close mobile sidebar when a note is selected
                 this.mobileSidebarOpen = false;
@@ -4204,6 +4245,9 @@ function noteApp() {
                     if (targetLine) {
                         params.set('line', String(targetLine));
                     }
+                    if (targetColumn) {
+                        params.set('col', String(targetColumn));
+                    }
                     const queryString = params.toString();
                     const url = `/${encodedPath}${queryString ? `?${queryString}` : ''}`;
                     window.history.pushState(
@@ -4211,6 +4255,7 @@ function noteApp() {
                             notePath: notePath, 
                             searchQuery: searchQuery,
                             targetLine: targetLine,
+                            targetColumn: targetColumn,
                             homepageFolder: this.selectedHomepageFolder || '' // Save current folder state
                         },
                         '',
@@ -4263,7 +4308,7 @@ function noteApp() {
                         // Apply or clear search highlighting
                         if (searchQuery) {
                             // Pass true to focus editor when loading from search result
-                            this.highlightSearchTerm(searchQuery, true, targetLine);
+                            this.highlightSearchTerm(searchQuery, true, targetLine, targetColumn);
                         } else if (targetLine) {
                             this.scrollEditorToLine(targetLine);
                             this.scrollPreviewToSourceLine(targetLine);
@@ -4317,10 +4362,12 @@ function noteApp() {
                 const searchParam = urlParams.get('search');
                 const lineParam = parseInt(urlParams.get('line') || '', 10);
                 const targetLine = Number.isFinite(lineParam) && lineParam > 0 ? lineParam : null;
+                const colParam = parseInt(urlParams.get('col') || '', 10);
+                const targetColumn = Number.isFinite(colParam) && colParam > 0 ? colParam : null;
                 
                 // Try to load the note directly - the backend will handle 404 if it doesn't exist
                 // This is more robust than checking the frontend notes list
-                this.loadNote(notePath, false, searchParam || '', targetLine);
+                this.loadNote(notePath, false, searchParam || '', targetLine, targetColumn);
                 
                 // If there's a search parameter, populate the search box and trigger search
                 if (searchParam) {
@@ -4394,7 +4441,7 @@ function noteApp() {
         },
 
         // Highlight search term in editor and preview
-        highlightSearchTerm(query, focusEditor = false, targetLine = null) {
+        highlightSearchTerm(query, focusEditor = false, targetLine = null, targetColumn = null) {
             if (!query || !query.trim()) {
                 this.clearSearchHighlights();
                 return;
@@ -4403,14 +4450,31 @@ function noteApp() {
             const searchTerm = query.trim();
             
             // Highlight in editor (textarea)
-            this.highlightInEditor(searchTerm, focusEditor, targetLine);
+            this.highlightInEditor(searchTerm, focusEditor, targetLine, targetColumn);
             
             // Highlight in preview (rendered HTML)
-            this.highlightInPreview(searchTerm, targetLine);
+            this.highlightInPreview(searchTerm, targetLine, targetColumn);
         },
-        
+
+        // Re-apply the current search highlight after the preview re-rendered
+        // (note loaded, or the user edited the note). Keeps whichever
+        // occurrence was active and leaves the scroll position alone: the pass
+        // that runs right after a search click has already scrolled to the
+        // chosen occurrence, and snapping back to match 0 here is what made the
+        // clicked occurrence lose its highlight.
+        _reapplySearchHighlights() {
+            const query = this.currentSearchHighlight;
+            if (!query) return;
+            const keepIndex = this.currentMatchIndex;
+            this.highlightInEditor(query, false, null, null, { scroll: false });
+            this.highlightInPreview(query, null, null, {
+                keepActiveIndex: keepIndex,
+                scroll: false,
+            });
+        },
+
         // Highlight search term in the editor textarea
-        highlightInEditor(searchTerm, shouldFocus = false, targetLine = null) {
+        highlightInEditor(searchTerm, shouldFocus = false, targetLine = null, targetColumn = null, opts = {}) {
             const editor = this._domCache.editor || document.getElementById('editor');
             if (!editor) return;
             
@@ -4427,12 +4491,28 @@ function noteApp() {
                 const lineStart = this._lineStartOffset(content, targetLine);
                 const lineEnd = this._lineStartOffset(content, targetLine + 1);
                 const foldedStart = this._foldedIndexForOriginal(foldedContent.map, lineStart);
-                const candidate = foldedContent.text.indexOf(foldedTerm, foldedStart);
-                // Only accept the candidate when it actually starts on the
-                // requested line; otherwise the note changed since the search.
-                if (candidate !== -1 && foldedContent.map[candidate] < lineEnd) {
-                    index = candidate;
-                    foundOnTargetLine = true;
+
+                // A line can hold several occurrences of the same term, so the
+                // column the sidebar reported pins the exact one. Using only
+                // the line used to select the first match on it.
+                if (targetColumn && targetColumn > 0) {
+                    const offset = this._sourceOffsetForLineColumn(content, targetLine, targetColumn);
+                    const foldedIdx = this._foldedIndexForOriginal(foldedContent.map, offset);
+                    if (foldedContent.text.startsWith(foldedTerm, foldedIdx)
+                        && foldedContent.map[foldedIdx] < lineEnd) {
+                        index = foldedIdx;
+                        foundOnTargetLine = true;
+                    }
+                }
+
+                if (index === -1) {
+                    const candidate = foldedContent.text.indexOf(foldedTerm, foldedStart);
+                    // Only accept the candidate when it actually starts on the
+                    // requested line; otherwise the note changed since the search.
+                    if (candidate !== -1 && foldedContent.map[candidate] < lineEnd) {
+                        index = candidate;
+                        foundOnTargetLine = true;
+                    }
                 }
             }
             // Fall back to the first occurrence when the requested line has no
@@ -4441,19 +4521,35 @@ function noteApp() {
                 index = foldedContent.text.indexOf(foldedTerm);
             }
 
-            const lineHeight = parseFloat(getComputedStyle(editor).lineHeight) || 20;
-            if (foundOnTargetLine) {
-                editor.scrollTop = Math.max(0, (targetLine - 5) * lineHeight);
-            } else if (index !== -1) {
-                const lineNumber = content.substring(0, foldedContent.map[index]).split('\n').length;
-                editor.scrollTop = Math.max(0, (lineNumber - 5) * lineHeight);
+            let targetScroll = null;
+            if (opts.scroll !== false) {
+                const lineHeight = parseFloat(getComputedStyle(editor).lineHeight) || 20;
+                if (foundOnTargetLine) {
+                    targetScroll = Math.max(0, (targetLine - 5) * lineHeight);
+                } else if (index !== -1) {
+                    const lineNumber = content.substring(0, foldedContent.map[index]).split('\n').length;
+                    targetScroll = Math.max(0, (lineNumber - 5) * lineHeight);
+                }
+                if (targetScroll !== null) {
+                    this._suspendScrollSync();
+                    editor.scrollTop = targetScroll;
+                }
             }
 
             if (index !== -1 && shouldFocus) {
                 const start = foldedContent.map[index];
                 const end = foldedContent.map[index + foldedTerm.length];
-                editor.focus();
+
+                // Place the caret before focusing: focus() reveals the current
+                // caret, and the caret left at the end of the previous note
+                // scrolled the editor to the bottom (scroll-sync then dragged
+                // the preview down with it).
                 editor.setSelectionRange(start, end);
+                editor.focus();
+                if (targetScroll !== null) {
+                    this._suspendScrollSync();
+                    editor.scrollTop = targetScroll;
+                }
                 
                 // Blur immediately so the selection stays visible but editor isn't focused
                 setTimeout(() => editor.blur(), 100);
@@ -4461,7 +4557,7 @@ function noteApp() {
         },
         
         // Highlight search term in the preview pane
-        highlightInPreview(searchTerm, targetLine = null) {
+        highlightInPreview(searchTerm, targetLine = null, targetColumn = null, opts = {}) {
             const preview = document.querySelector('.markdown-preview');
             if (!preview) return;
             
@@ -4482,9 +4578,10 @@ function noteApp() {
             const textNodes = [];
             let node;
             while (node = walker.nextNode()) {
-                // Skip code blocks and pre tags
-                if (node.parentElement && (node.parentElement.tagName === 'CODE' || 
-                    node.parentElement.tagName === 'PRE')) {
+                // Skip anything inside <code>/<pre>. closest() (rather than a
+                // parent check) also covers the copy buttons the renderer
+                // injects into every <pre>, whose text is not note content.
+                if (node.parentElement && node.parentElement.closest('code, pre')) {
                     continue;
                 }
                 textNodes.push(node);
@@ -4548,35 +4645,355 @@ function noteApp() {
             // Update total matches and reset current index
             this.totalMatches = matchIndex;
             this.currentMatchIndex = matchIndex > 0 ? 0 : -1;
+
+            const marks = preview.querySelectorAll('mark.search-highlight');
+
+            // Re-apply pass (the note re-rendered while highlights were
+            // already showing): keep the occurrence that was active, and leave
+            // the viewport where it is unless asked to scroll.
+            if (opts.keepActiveIndex != null) {
+                if (marks.length === 0) {
+                    this.currentMatchIndex = -1;
+                    return;
+                }
+                const keep = opts.keepActiveIndex < 0
+                    ? -1
+                    : Math.min(opts.keepActiveIndex, marks.length - 1);
+                marks.forEach((mark, i) => {
+                    mark.classList.toggle('active-match', i === keep);
+                });
+                this.currentMatchIndex = keep;
+                if (opts.scroll !== false && keep >= 0) this.scrollToMatch(keep);
+                return;
+            }
             
-            // Prefer the exact source line the user clicked; otherwise scroll
+            // Prefer the exact occurrence the user clicked; otherwise scroll
             // to the first highlighted match.
             if (targetLine && targetLine > 0) {
-                this.scrollPreviewToSourceLine(targetLine);
-                // The clicked occurrence is not necessarily the first match in
-                // the note, so mark the highlight nearest the viewport as
-                // active instead of always using index 0.
-                const container = this._domCache.previewContainer;
-                const marks = preview.querySelectorAll('mark.search-highlight');
-                if (container && marks.length > 0) {
-                    const anchor = container.scrollTop + 100;
-                    let best = marks[0];
-                    let bestDist = Math.abs(best.offsetTop - anchor);
-                    marks.forEach(mark => {
-                        const dist = Math.abs(mark.offsetTop - anchor);
-                        if (dist < bestDist) {
-                            bestDist = dist;
-                            best = mark;
-                        }
-                    });
-                    marks.forEach(mark => {
-                        mark.classList.toggle('active-match', mark === best);
-                    });
-                    this.currentMatchIndex = Array.prototype.indexOf.call(marks, best);
-                }
-            } else if (this.totalMatches > 0) {
+                this._focusPreviewOccurrence(marks, targetLine, targetColumn, foldedTerm);
+            } else if (this.totalMatches > 0 && opts.scroll !== false) {
                 this.scrollToMatch(0);
             }
+        },
+
+        // Make the occurrence at line:column the active <mark> and scroll it
+        // into view. When the source-side numbering cannot be trusted (the
+        // term also appears in code, link targets, math, …) fall back to the
+        // mark nearest the block anchor for that line.
+        _focusPreviewOccurrence(marks, targetLine, targetColumn, foldedTerm) {
+            if (marks.length === 0) {
+                this.scrollPreviewToSourceLine(targetLine);
+                this.currentMatchIndex = -1;
+                return;
+            }
+
+            const offset = this._sourceOffsetForLineColumn(
+                this.noteContent || '', targetLine, targetColumn
+            );
+            let index = this._previewMarkIndexForSourceOffset(offset, foldedTerm, marks.length);
+
+            if (index === -1) {
+                // The occurrence lives in frontmatter or in code: the preview
+                // has no mark for it (the editor still selects it).
+                marks.forEach((mark) => mark.classList.remove('active-match'));
+                this.scrollPreviewToSourceLine(targetLine);
+                this.currentMatchIndex = -1;
+                return;
+            }
+
+            if (index < 0) {
+                // Counts disagree: keep the old "nearest to the anchor" pick.
+                this.scrollPreviewToSourceLine(targetLine);
+                const container = this._domCache.previewContainer;
+                if (!container) return;
+                const anchor = container.scrollTop + 100;
+                let best = 0;
+                let bestDist = Infinity;
+                marks.forEach((mark, i) => {
+                    const dist = Math.abs(this._scrollTopOfPreviewElement(mark) - anchor);
+                    if (dist < bestDist) {
+                        bestDist = dist;
+                        best = i;
+                    }
+                });
+                index = best;
+            }
+
+            marks.forEach((mark, i) => {
+                mark.classList.toggle('active-match', i === index);
+            });
+            this.currentMatchIndex = index;
+            this._scrollPreviewToElement(marks[index], 100, { suppressSync: true });
+        },
+
+        // Index of the <mark> that corresponds to a source offset, or
+        //   -1 when that occurrence never becomes preview text, and
+        //   -2 when the source-side count disagrees with the rendered marks.
+        _previewMarkIndexForSourceOffset(offset, foldedTerm, markCount) {
+            const content = this.noteContent || '';
+            if (!content) return -2;
+
+            const folded = this._foldForSearch(content);
+            const regions = this._searchHiddenRegions(content);
+            if (this._spanOverlapsRegions(regions, offset, offset + 1)) return -1;
+
+            let before = 0;
+            let total = 0;
+            let from = 0;
+            while (true) {
+                const idx = folded.text.indexOf(foldedTerm, from);
+                if (idx === -1) break;
+                from = idx + foldedTerm.length;
+
+                const start = folded.map[idx];
+                const end = folded.map[idx + foldedTerm.length];
+                if (this._spanOverlapsRegions(regions, start, end)) continue;
+
+                total++;
+                if (start < offset) before++;
+            }
+
+            // Only trust the numbering when both sides agree on the amount of
+            // highlightable occurrences; a mismatch means one of the hidden
+            // region rules above is off for this note.
+            if (total !== markCount || before >= markCount) return -2;
+            return before;
+        },
+
+        // 0-based character offset of a 1-based line:column (the column is in
+        // runes, as reported by the search API). Clamped to the end of the
+        // line so a stale column cannot spill into the next one.
+        _sourceOffsetForLineColumn(content, line, column = 1) {
+            let offset = this._lineStartOffset(content, line);
+            let rune = 1;
+            while (offset < content.length && rune < column) {
+                const code = content.codePointAt(offset);
+                if (code === 10) break; // '\n'
+                offset += code > 0xFFFF ? 2 : 1;
+                rune++;
+            }
+            return offset;
+        },
+
+        // Source spans that never show up as text in the preview. Mirrors
+        // highlightInPreview's "skip code" rule plus the constructs the
+        // renderer consumes instead of emitting as text: frontmatter, fenced
+        // and inline code, HTML tags, link destinations, image alt text, the
+        // target half of [[target|display]] and reference definitions.
+        // Counting occurrences this way lets a clicked sidebar row be mapped
+        // onto the exact <mark>.
+        _searchHiddenRegions(content) {
+            const regions = [];
+            const add = (start, end) => {
+                if (end > start) regions.push([start, end]);
+            };
+
+            // Line starts, so every rule can work with whole lines.
+            const lineStarts = [0];
+            for (let p = content.indexOf('\n'); p !== -1; p = content.indexOf('\n', p + 1)) {
+                lineStarts.push(p + 1);
+            }
+            const lineEnd = (i) => (i + 1 < lineStarts.length ? lineStarts[i + 1] - 1 : content.length);
+
+            // Frontmatter, fenced code and reference definitions.
+            let fence = null;
+            for (let i = 0; i < lineStarts.length; i++) {
+                const line = content.slice(lineStarts[i], lineEnd(i));
+
+                // The renderer strips YAML frontmatter: opening '---' line,
+                // then everything up to the next line that trims to '---'.
+                if (i === 0 && line.trim() === '---') {
+                    let close = -1;
+                    for (let k = 1; k < lineStarts.length; k++) {
+                        if (content.slice(lineStarts[k], lineEnd(k)).trim() === '---') {
+                            close = k;
+                            break;
+                        }
+                    }
+                    if (close !== -1) {
+                        add(0, lineEnd(close));
+                        i = close;
+                        continue;
+                    }
+                }
+
+                if (fence) {
+                    if (fence.closeRe.test(line)) {
+                        add(fence.start, lineEnd(i));
+                        fence = null;
+                    }
+                    continue;
+                }
+
+                const open = line.match(/^\s{0,3}(`{3,}|~{3,})/);
+                if (open) {
+                    const ch = open[1][0];
+                    fence = {
+                        start: lineStarts[i],
+                        closeRe: new RegExp(
+                            '^\\s{0,3}' + (ch === '`' ? '`' : '~') + '{' + open[1].length + ',}\\s*$'
+                        ),
+                    };
+                    continue;
+                }
+
+                if (/^\s{0,3}\[[^\]]+\]:/.test(line)) add(lineStarts[i], lineEnd(i));
+            }
+            if (fence) add(fence.start, content.length);
+
+            // Inline constructs, scanned once over the whole document.
+            // Overlapping the line-based regions above is harmless.
+            const TAG_RE = /<\/?[A-Za-z][A-Za-z0-9-]*(?:\s[^<>]*)?\/?>/y;
+            let i = 0;
+            while (i < content.length) {
+                const ch = content[i];
+
+                if (ch === '`') {
+                    let runLen = 1;
+                    while (content[i + runLen] === '`') runLen++;
+                    let j = i + runLen;
+                    let closed = -1;
+                    const limit = Math.min(content.length, i + 5000);
+                    while (j < limit) {
+                        if (content[j] === '`') {
+                            let closeLen = 1;
+                            while (content[j + closeLen] === '`') closeLen++;
+                            if (closeLen === runLen) {
+                                closed = j + closeLen;
+                                break;
+                            }
+                            j += closeLen;
+                            continue;
+                        }
+                        // An inline code span cannot cross a blank line.
+                        if (content[j] === '\n' && content[j + 1] === '\n') break;
+                        j++;
+                    }
+                    if (closed !== -1) {
+                        add(i, closed);
+                        i = closed;
+                    } else {
+                        i += runLen;
+                    }
+                    continue;
+                }
+
+                if (ch === '<') {
+                    if (content.startsWith('<!--', i)) {
+                        const end = content.indexOf('-->', i + 4);
+                        if (end !== -1) {
+                            add(i, end + 3);
+                            i = end + 3;
+                            continue;
+                        }
+                    }
+                    TAG_RE.lastIndex = i;
+                    const tag = TAG_RE.exec(content);
+                    if (tag) {
+                        add(i, i + tag[0].length);
+                        i += tag[0].length;
+                        continue;
+                    }
+                    if (content.startsWith('<!', i) || content.startsWith('<?', i)) {
+                        const gt = content.indexOf('>', i);
+                        if (gt !== -1) {
+                            add(i, gt + 1);
+                            i = gt + 1;
+                            continue;
+                        }
+                    }
+                    i++;
+                    continue;
+                }
+
+                if (ch === '!' && content[i + 1] === '[') {
+                    // ![alt](url) and ![[media]]: neither alt text nor the
+                    // media name is rendered as note text.
+                    let depth = 0;
+                    let j = i + 1;
+                    for (; j < content.length; j++) {
+                        if (content[j] === '[') depth++;
+                        else if (content[j] === ']') {
+                            depth--;
+                            if (depth === 0) break;
+                        }
+                    }
+                    if (j < content.length) {
+                        add(i, j + 1);
+                        i = j + 1;
+                    } else {
+                        i++;
+                    }
+                    continue;
+                }
+
+                if (ch === '[' && content[i + 1] === '[') {
+                    // [[target|display]]: only the display half is rendered.
+                    const close = content.indexOf(']]', i + 2);
+                    if (close !== -1) {
+                        const pipe = content.indexOf('|', i + 2);
+                        if (pipe !== -1 && pipe < close) add(i, pipe + 1);
+                        i = close + 2;
+                        continue;
+                    }
+                    i += 2;
+                    continue;
+                }
+
+                if (ch === ']' && content[i + 1] === '(') {
+                    // Link destination (with optional title), never text.
+                    let depth = 0;
+                    let j = i + 1;
+                    for (; j < content.length; j++) {
+                        if (content[j] === '(') depth++;
+                        else if (content[j] === ')') {
+                            depth--;
+                            if (depth === 0) break;
+                        }
+                    }
+                    if (j < content.length) {
+                        add(i, j + 1);
+                        i = j + 1;
+                    } else {
+                        i++;
+                    }
+                    continue;
+                }
+
+                i++;
+            }
+
+            return regions;
+        },
+
+        _spanOverlapsRegions(regions, start, end) {
+            for (const [regionStart, regionEnd] of regions) {
+                if (start < regionEnd && end > regionStart) return true;
+            }
+            return false;
+        },
+
+        // Scroll `el` (a preview descendant) to `offset` px below the top of
+        // the preview pane. Rect-based so it does not depend on which ancestor
+        // happens to be the offset parent. suppressSync is used by jumps that
+        // also position the editor themselves: mirroring this write back would
+        // replace the exact target with a proportional guess.
+        _scrollPreviewToElement(el, offset = 100, opts = {}) {
+            const container = this._domCache.previewContainer;
+            if (!container || !el) return;
+            const cRect = container.getBoundingClientRect();
+            const eRect = el.getBoundingClientRect();
+            if (opts.suppressSync) this._suspendScrollSync();
+            container.scrollTop = Math.max(0, container.scrollTop + eRect.top - cRect.top - offset);
+        },
+
+        // Current scroll offset of a preview element inside the preview pane.
+        _scrollTopOfPreviewElement(el) {
+            const container = this._domCache.previewContainer;
+            if (!container || !el) return 0;
+            const cRect = container.getBoundingClientRect();
+            const eRect = el.getBoundingClientRect();
+            return container.scrollTop + eRect.top - cRect.top;
         },
 
         // Scroll the textarea to a 1-based source line.
@@ -4589,23 +5006,25 @@ function noteApp() {
 
         // Scroll the preview to the nearest block carrying a data-source-line
         // anchor (the markdown renderer stamps these during scroll-sync setup).
+        // Anchors store 0-based line indexes because they drive scroll-sync
+        // against the editor, while search results report 1-based lines.
         scrollPreviewToSourceLine(line) {
             const preview = document.querySelector('.markdown-preview');
-            const previewContainer = this._domCache.previewContainer;
-            if (!preview || !previewContainer || !line) return;
+            if (!preview || !line) return;
 
+            const target = line - 1;
             const anchors = preview.querySelectorAll('[data-source-line]');
             let best = null;
             let bestLine = -1;
             for (const el of anchors) {
                 const anchorLine = parseInt(el.getAttribute('data-source-line'), 10);
                 if (!Number.isFinite(anchorLine)) continue;
-                if (anchorLine === line) {
+                if (anchorLine === target) {
                     best = el;
                     bestLine = anchorLine;
                     break;
                 }
-                if (anchorLine <= line && anchorLine > bestLine) {
+                if (anchorLine <= target && anchorLine > bestLine) {
                     best = el;
                     bestLine = anchorLine;
                 }
@@ -4613,12 +5032,10 @@ function noteApp() {
 
             if (!best) {
                 const firstMatch = preview.querySelector('mark.search-highlight');
-                if (firstMatch) {
-                    previewContainer.scrollTop = Math.max(0, firstMatch.offsetTop - 100);
-                }
+                if (firstMatch) this._scrollPreviewToElement(firstMatch, 100, { suppressSync: true });
                 return;
             }
-            previewContainer.scrollTop = Math.max(0, best.offsetTop - 100);
+            this._scrollPreviewToElement(best, 100, { suppressSync: true });
         },
         
         // Navigate to next search match
@@ -4652,11 +5069,7 @@ function noteApp() {
             
             // Scroll to the match
             const targetMatch = allMatches[index];
-            const previewContainer = this._domCache.previewContainer;
-            if (previewContainer && targetMatch) {
-                const elementTop = targetMatch.offsetTop;
-                previewContainer.scrollTop = elementTop - 100; // Scroll with some offset
-            }
+            if (targetMatch) this._scrollPreviewToElement(targetMatch);
         },
         
         // Clear search highlights
@@ -5756,7 +6169,10 @@ function noteApp() {
         // Open a note at the exact occurrence the user clicked.
         openSearchMatch(path, match, query) {
             const line = match && match.line_number ? match.line_number : null;
-            this.openItem(path, 'note', query, line);
+            // The column pins the occurrence when one line holds several of
+            // them; without it the first match on the line would be picked.
+            const column = match && match.column ? match.column : null;
+            this.openItem(path, 'note', query, line, column);
         },
         
         // Trigger MathJax typesetting after DOM update.
@@ -7150,6 +7566,19 @@ function noteApp() {
         },
 
         // Setup scroll synchronization
+        // Ignore scroll events for a short window after a programmatic write.
+        // The guard is time-based (not the isScrolling flag) because a single
+        // jump writes to both panes: the second write would re-arm the flag
+        // only to have the first event consume it, and the second event would
+        // then mirror its pane back to a proportional position.
+        _suspendScrollSync(ms = CONFIG.SCROLL_SYNC_DELAY) {
+            this._scrollSyncSuppressUntil = performance.now() + ms;
+        },
+
+        _scrollSyncSuppressed() {
+            return performance.now() < this._scrollSyncSuppressUntil;
+        },
+
         setupScrollSync() {
             // Use cached references (refresh if not available)
             if (!this._domCache.editor || !this._domCache.previewContainer) {
@@ -7196,6 +7625,11 @@ function noteApp() {
             // Create new scroll handlers
             this._editorScrollHandler = () => {
                 if (this.isScrolling) {
+                    this.isScrolling = false;
+                    return;
+                }
+
+                if (this._scrollSyncSuppressed()) {
                     this.isScrolling = false;
                     return;
                 }
@@ -7253,6 +7687,11 @@ function noteApp() {
             
             this._previewScrollHandler = () => {
                 if (this.isScrolling) {
+                    this.isScrolling = false;
+                    return;
+                }
+
+                if (this._scrollSyncSuppressed()) {
                     this.isScrolling = false;
                     return;
                 }

@@ -3275,6 +3275,7 @@
     <!-- Wikilink / media autocomplete popup -->
     <div x-show="wikilinkAutocomplete.open"
          @mousedown.prevent
+         id="wikilink-autocomplete"
          class="wikilink-autocomplete"
          :style="`position: fixed; top: ${wikilinkAutocomplete.position.top}px; left: ${wikilinkAutocomplete.position.left}px; z-index: 1200;`"
          x-cloak>
