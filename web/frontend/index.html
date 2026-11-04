@@ -482,19 +482,178 @@
             text-overflow: ellipsis;
         }
         
-        /* Folder tree styling - compact Obsidian-like */
-        .folder-item {
-            user-select: none;
-            border-radius: 6px;
-            border-left: 3px solid transparent;
-            margin-left: 2px;
+        /* ========================= Folder tree =========================
+           Compact rows (13px text, 2px padding) so far more of the vault fits
+           in the sidebar, with colour-coded types: folders amber, .md notes
+           light blue, PDFs red; other media keeps its emoji. The hue lives on
+           the icon and is mixed into the label with the theme's own text
+           colour, so labels stay readable on light and dark themes alike. */
+        :root {
+            --tree-folder: #f59e0b;   /* amber-500 - folders */
+            --tree-note: #3b82f6;     /* blue-500  - .md files */
+            --tree-pdf: #ef4444;      /* red-500   - .pdf files */
         }
-        
-        .folder-item:hover {
+
+        .tree-row {
+            position: relative;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 6px;
+            font-size: 13px;
+            line-height: 1.35;
+            border-radius: 5px;
+            border-left: 2px solid transparent;
+            cursor: pointer;
+            user-select: none;
+            color: var(--text-primary);
+            transition: background-color 0.12s ease, border-color 0.12s ease, transform 0.1s ease;
+        }
+
+        .tree-row:hover {
             background-color: var(--bg-hover);
+        }
+
+        /* Selected note / media: also keeps the inline accent background so the
+           scroll-into-view lookup (which inspects computed styles) still finds it. */
+        .tree-active {
+            background-color: var(--accent-light);
             border-left-color: var(--accent-primary);
         }
-        
+
+        /* Chevron and the spacer that lines file icons up under folder icons */
+        .tree-chevron,
+        .tree-indent {
+            flex: 0 0 14px;
+            width: 14px;
+            height: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-tertiary);
+            pointer-events: none;
+        }
+
+        .tree-chevron {
+            transition: transform 0.15s ease;
+        }
+
+        .tree-chevron.is-open {
+            transform: rotate(90deg);
+        }
+
+        .tree-icon {
+            flex-shrink: 0;
+        }
+
+        .tree-icon--folder { color: var(--tree-folder); }
+        .tree-icon--note   { color: var(--tree-note); }
+        .tree-icon--pdf    { color: var(--tree-pdf); }
+
+        .tree-emoji {
+            flex: 0 0 14px;
+            width: 14px;
+            text-align: center;
+            font-size: 11px;
+            line-height: 1;
+        }
+
+        .tree-label {
+            flex: 1 1 auto;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            pointer-events: none;
+        }
+
+        .tree--folder .tree-label {
+            font-weight: 500;
+            color: var(--text-primary);
+            color: color-mix(in srgb, var(--tree-folder) 55%, var(--text-primary));
+        }
+
+        .tree--note .tree-label {
+            color: var(--text-primary);
+            color: color-mix(in srgb, var(--tree-note) 45%, var(--text-primary));
+        }
+
+        .tree--pdf .tree-label {
+            color: var(--text-primary);
+            color: color-mix(in srgb, var(--tree-pdf) 55%, var(--text-primary));
+        }
+
+        /* Media rows show their extension: names are stored without one, so
+           "orcamento" alone would not tell a PDF from a note. */
+        .tree-ext {
+            font-size: 10px;
+            margin-left: 3px;
+            opacity: 0.85;
+        }
+
+        .tree--pdf .tree-ext {
+            color: var(--tree-pdf);
+            font-weight: 600;
+            opacity: 1;
+        }
+
+        .tree--media .tree-ext {
+            color: var(--text-tertiary);
+        }
+
+        .tree-empty {
+            font-size: 10px;
+            font-weight: 400;
+            color: var(--text-tertiary);
+            margin-left: 4px;
+        }
+
+        /* Row actions (new / rename / delete), revealed on hover */
+        .tree-actions {
+            position: absolute;
+            right: 4px;
+            top: 50%;
+            transform: translateY(-50%);
+            display: flex;
+            gap: 2px;
+            padding-left: 18px;
+            background: linear-gradient(to right, transparent, var(--bg-hover) 35%, var(--bg-hover));
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .tree-action {
+            border: none;
+            border-radius: 3px;
+            padding: 1px 4px;
+            font-size: 11px;
+            line-height: 1.5;
+            background-color: var(--bg-tertiary);
+            color: var(--text-secondary);
+            cursor: pointer;
+        }
+
+        .tree-action:hover {
+            filter: brightness(1.15);
+        }
+
+        .tree-action--danger {
+            color: var(--error);
+            background-color: transparent;
+        }
+
+        .note-item .tree-label {
+            padding-right: 22px;
+        }
+
+        .note-delete-btn {
+            position: absolute;
+            right: 4px;
+            top: 50%;
+            transform: translateY(-50%);
+            transition: opacity 0.15s ease;
+        }
+
         .folder-item.drag-over {
             background-color: var(--accent-light) !important;
             /* outline instead of border: the highlight must not resize the row
@@ -503,23 +662,7 @@
             outline: 2px dashed var(--accent-primary);
             outline-offset: -2px;
         }
-        
-        .folder-expanded {
-            font-weight: 600;
-        }
-        
-        .note-item {
-            border-radius: 6px;
-            border-left: 3px solid transparent;
-            margin-left: 2px;
-        }
-        
-        .note-item:hover {
-            background-color: var(--bg-hover);
-            border-left-color: var(--accent-primary);
-            transform: translateX(2px);
-        }
-        
+
         /* Active/selected note styling */
         .note-item.active,
         .note-item[style*="accent-light"] {
@@ -586,24 +729,31 @@
         .hover-buttons {
             transition: opacity 0.2s;
         }
-        
-        .folder-item:hover .hover-buttons {
-            opacity: 1 !important;
-            pointer-events: auto !important;
+
+        /* Row actions (folder +/-/rename, note delete) are hidden until the
+           row is hovered; the gradient behind them keeps the label legible
+           where the buttons overlap it. */
+        .tree-row:hover .tree-actions {
+            opacity: 1;
+            pointer-events: auto;
         }
-        
+
         /* Note delete button on hover */
         .note-item:hover .note-delete-btn {
             opacity: 1 !important;
         }
-        
-        /* Folder hierarchy lines (Obsidian-style) */
+
+        /* Folder hierarchy lines (Obsidian-style).
+           All of the per-level indent comes from here: nested
+           .folder-contents boxes stack, so each level costs one 12px step
+           plus a 1px amber guide instead of a fat gutter. The root level is
+           not wrapped in .folder-contents, so it stays flush left. */
         .folder-contents {
             position: relative;
-            padding-left: 1rem;
-            margin-left: 0.5rem;
+            padding-left: 12px;
+            margin-left: 3px;
         }
-        
+
         .folder-contents::before {
             content: '';
             position: absolute;
@@ -611,8 +761,8 @@
             top: 0;
             bottom: 0;
             width: 1px;
-            background-color: var(--text-tertiary);
-            opacity: 0.4;
+            background-color: var(--border-secondary);
+            background-color: color-mix(in srgb, var(--tree-folder) 40%, var(--border-secondary));
         }
         
         /* Icon Rail (VS Code-style navigation) */
@@ -1596,7 +1746,7 @@
                     <div class="flex-1 overflow-y-auto custom-scrollbar p-2">
                         
                         <!-- Favorites Section -->
-                        <div x-show="favoriteNotes.length > 0" class="mb-3">
+                        <div x-show="favoriteNotes.length > 0" class="mb-2">
                             <div 
                                 @click="favoritesExpanded = !favoritesExpanded"
                                 class="flex items-center justify-between px-2 py-1 cursor-pointer rounded hover:bg-opacity-50 transition-colors"
@@ -1619,7 +1769,7 @@
                                 <template x-for="fav in favoriteNotes" :key="fav.path">
                                     <div 
                                         @click="loadNote(fav.path)"
-                                        class="hover-accent flex items-center justify-between px-2 py-1.5 cursor-pointer group"
+                                        class="hover-accent flex items-center justify-between px-2 py-1 cursor-pointer group"
                                         :class="{'active': currentNote === fav.path}"
                                         :style="currentNote === fav.path ? 'background-color: var(--accent-primary); color: white;' : 'color: var(--text-secondary);'"
                                         :title="fav.path"
@@ -1646,8 +1796,8 @@
                             </div>
                         </div>
                         
-                        <div class="text-xs px-2 py-1 mb-2" style="color: var(--text-tertiary);">
-                            <div class="flex items-center justify-between mb-1">
+                        <div class="text-xs px-2 py-0.5 mb-1.5" style="color: var(--text-tertiary);">
+                            <div class="flex items-center justify-between mb-0.5">
                                 <span x-text="t('sidebar.folders_and_notes')"></span>
                                 <div class="flex gap-0.5">
                                     <button
@@ -1703,7 +1853,7 @@
                         
                         <!-- Folders (rendered recursively for unlimited nesting) -->
                         <template x-for="[folderKey, folder] in Object.entries(folderTree).filter(([k, v]) => k !== '__root__' && (!hideUnderscoreFolders || !v.name.startsWith('_'))).sort((a, b) => getFolderSortComparator()(a[1], b[1]))" :key="folderKey">
-                            <div x-html="renderFolderRecursive(folder, 0, true)"></div>
+                            <div x-html="renderFolderRecursive(folder)"></div>
                         </template>
                         
                         <!-- Root notes and images (no folder) -->

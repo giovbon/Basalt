@@ -5,7 +5,7 @@
     "flag": "🇧🇷"
   },
   "app": {
-    "tagline": "Sua Base de Conhecimento Auto-Hosteada"
+    "tagline": "Sua Base de Conhecimento Auto-Hospedada"
   },
   "common": {
     "save": "Salvar",
@@ -226,7 +226,7 @@
   },
   "login": {
     "title": "Login",
-    "tagline": "Sua Base de Conhecimento Auto-Hosteada",
+    "tagline": "Sua Base de Conhecimento Auto-Hospedada",
     "password_placeholder": "Digite sua senha",
     "unlock_button": "🔓 Desbloquear",
     "footer": "🔒 Seguro e Auto-Hosteado",

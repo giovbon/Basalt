@@ -270,14 +270,24 @@ func (h *SystemHandler) ExportNote(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		// Lowercase filename -> vault path, first match wins (mirrors the
-		// frontend's media lookup).
+		// frontend's media lookup). Full path and extension-less stems are
+		// indexed too, so [[folder/report.pdf]] and [[report]] resolve the
+		// same way they do in the app.
 		filename := n.Path
 		if i := strings.LastIndex(filename, "/"); i >= 0 {
 			filename = filename[i+1:]
 		}
 		filename = strings.ToLower(filename)
-		if _, exists := media[filename]; !exists {
-			media[filename] = n.Path
+		pathLower := strings.ToLower(n.Path)
+		stem := strings.TrimSuffix(filename, filepath.Ext(filename))
+		pathStem := strings.TrimSuffix(pathLower, filepath.Ext(pathLower))
+		for _, key := range []string{filename, pathLower, stem, pathStem} {
+			if key == "" {
+				continue
+			}
+			if _, exists := media[key]; !exists {
+				media[key] = n.Path
+			}
 		}
 	}
 	resolver := vault.NewLinkResolver(notePaths)

@@ -96,6 +96,16 @@ func rewriteExportWikilinks(md string, resolver *vault.LinkResolver, media map[s
 
 			resolved := resolver.ResolveWikilink(base, sourceFolder)
 			if resolved == "" {
+				// Media files are link targets too ([[report.pdf]]): notes win
+				// because the resolver ran first, the file itself is the
+				// fallback, and the target keeps its extension.
+				if path, ok := media[strings.ToLower(base)]; ok {
+					text := display
+					if text == "" {
+						text = base
+					}
+					return fmt.Sprintf("[%s](/api/media/%s)", escapeLinkText(text), escapeVaultPath(path))
+				}
 				return match
 			}
 			text := display
