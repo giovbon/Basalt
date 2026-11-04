@@ -11,6 +11,7 @@ module.exports = {
   content: [
     './index.html',
     './app.js',
+    './src/**/*.js',
     './editor-markdown-continue.js',
   ],
   theme: {

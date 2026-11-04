@@ -148,6 +148,8 @@ func (h *StaticHandler) ServeStatic(w http.ResponseWriter, r *http.Request) {
 	switch ext {
 	case ".js", ".mjs":
 		w.Header().Set("Content-Type", "application/javascript")
+	case ".map":
+		w.Header().Set("Content-Type", "application/json")
 	case ".css":
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
 	case ".png":

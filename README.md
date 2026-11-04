@@ -30,9 +30,18 @@ PORT=8080 ./run.sh
 
 ### Desenvolvimento: alterando a interface
 
+O JavaScript é modular: as fontes ficam em `web/frontend/src/` (ES modules) e
+são empacotadas em `web/frontend/app.js` pelo esbuild. **Não edite `app.js`** —
+ele é gerado. Depois de mexer em `src/`:
+
+```bash
+./build-js.sh        # requer Node.js/npm; regenera app.js + app.js.map
+node --test          # a partir de web/frontend/: testes dos módulos puros
+```
+
 O CSS do Tailwind é pré-compilado em `web/frontend/tailwind.css` (substitui o
 antigo Play CDN de 408 KB que compilava estilos em runtime no navegador). Se
-você adicionar ou renomear classes Tailwind em `index.html`/`app.js`, regenere
+você adicionar ou renomear classes Tailwind em `index.html`/`src/`, regenere
 o CSS e commite junto com a mudança:
 
 ```bash

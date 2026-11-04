@@ -1,0 +1,10 @@
+{
+  "name": "basalt-frontend",
+  "private": true,
+  "type": "module",
+  "description": "Basalt SPA sources. Bundled into app.js by ../build-js.sh (esbuild); pure modules are tested with node --test.",
+  "scripts": {
+    "build": "npx --yes esbuild@0.24.2 src/main.js --bundle --format=iife --target=es2020 --minify --sourcemap --legal-comments=none --banner:js='/* GENERATED FILE - edit web/frontend/src/ and run ./build-js.sh */' --outfile=app.js",
+    "test": "node --test"
+  }
+}
