@@ -167,7 +167,26 @@ func (h *TagsSearchHandler) SearchNotes(w http.ResponseWriter, r *http.Request) 
 		return notes[i].MTime > notes[j].MTime
 	})
 
-	var results []search.SearchResult
+	limit, offset := ParsePaginationParams(r)
+
+	// Notes outside the requested page are still counted (so "total" and
+	// "has_more" stay exact) but never read or snippet-extracted: with a big
+	// vault the cost is one pass over the folded text, not N file reads.
+	pageStart, pageEnd := 0, int(^uint(0)>>1)
+	if limit != nil {
+		lim := *limit
+		if lim < 0 {
+			lim = 0
+		}
+		off := offset
+		if off < 0 {
+			off = 0
+		}
+		pageStart, pageEnd = off, off+lim
+	}
+
+	results := []search.SearchResult{}
+	matched := 0
 	for _, n := range notes {
 		if n.Type != "note" {
 			continue
@@ -181,6 +200,11 @@ func (h *TagsSearchHandler) SearchNotes(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 		if !strings.Contains(folded, foldedQuery) {
+			continue
+		}
+
+		matched++
+		if matched <= pageStart || matched > pageEnd {
 			continue
 		}
 
@@ -218,13 +242,31 @@ func (h *TagsSearchHandler) SearchNotes(w http.ResponseWriter, r *http.Request) 
 		})
 	}
 
-	limit, offset := ParsePaginationParams(r)
-	paginated := Paginate(results, limit, offset)
+	var pagination *PaginationInfo
+	if limit != nil {
+		lim := *limit
+		if lim < 0 {
+			lim = 0
+		}
+		off := offset
+		if off < 0 {
+			off = 0
+		}
+		if off > matched {
+			off = matched
+		}
+		pagination = &PaginationInfo{
+			Limit:   &lim,
+			Offset:  off,
+			Total:   matched,
+			HasMore: off+lim < matched,
+		}
+	}
 
 	resp := SearchResponse{
-		Results:    paginated.Items,
+		Results:    results,
 		Query:      query,
-		Pagination: paginated.Pagination,
+		Pagination: pagination,
 	}
 
 	RespondJSON(w, http.StatusOK, resp)

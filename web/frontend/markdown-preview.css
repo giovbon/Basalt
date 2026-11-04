@@ -13,8 +13,10 @@
     font-size: 16px;
 }
 
-/* Readable line length - constrain text width for better readability */
-.markdown-preview.readable-width {
+/* Readable line length - constrain text width for better readability.
+   The cap is applied per block instead of on the container so wide content
+   (mermaid diagrams) can still span the whole preview pane. */
+.markdown-preview.readable-width > * {
     max-width: 750px;
     margin-left: auto;
     margin-right: auto;
@@ -386,11 +388,14 @@
 }
 
 /* Mermaid diagram styling - minimal, let Mermaid handle its own rendering.
-   Diagrams are meant to use the full width of the preview pane: Mermaid
-   writes an inline max-width for the diagram's natural size, so it needs
-   !important to stay responsive instead of shrinking to that width. */
-.markdown-preview .mermaid-rendered {
+   Diagrams are meant to use the full width of the preview pane, even when
+   "readable line length" (750px column) is on: Mermaid writes an inline
+   max-width for the diagram's natural size, so it needs !important to stay
+   responsive instead of shrinking to that width. */
+.markdown-preview .mermaid-rendered,
+.markdown-preview.readable-width .mermaid-rendered {
     width: 100%;
+    max-width: none;
 }
 .markdown-preview .mermaid-rendered svg {
     width: 100% !important;

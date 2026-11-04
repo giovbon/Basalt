@@ -1,7 +1,6 @@
 package vault
 
 import (
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -249,35 +248,53 @@ func (ix *Index) makeFoldRoomLocked(need int64, excludeRel string) {
 	)
 }
 
-// makeRoomLocked frees bytes from pool until need more bytes fit budget,
-// dropping the least recently used payloads first. has reports whether an
-// entry still carries the payload and drop reclaims one entry's payload.
-func (ix *Index) makeRoomLocked(pool *int64, budget, need int64, excludeRel string, has func(*indexEntry) bool, recency func(*indexEntry) int64, drop func(*indexEntry)) {
-	if *pool+need <= budget {
-		return
-	}
+// evictionSampleSize bounds how many entries one eviction pass inspects.
+//
+// Eviction is sampled instead of exact on purpose: the recency counters live in
+// atomics so cache hits can stay under RLock (many concurrent readers, no list
+// mutation), which rules out keeping an intrusive LRU list. Sorting the whole
+// index on every insert is the alternative, and that is O(n log n) per note —
+// with a vault bigger than the cache budget it turns a scan into hours.
+// Sampling keeps eviction O(1) and is the standard approximation (Redis does
+// the same); a payload evicted slightly later than the true oldest is replaced
+// on demand anyway.
+const evictionSampleSize = 64
 
-	type candidate struct {
-		rel   string
-		order int64
+// makeRoomLocked frees bytes from pool until need more bytes fit budget,
+// dropping recently-unsampled payloads first. has reports whether an entry
+// still carries the payload and drop reclaims one entry's payload.
+func (ix *Index) makeRoomLocked(pool *int64, budget, need int64, excludeRel string, has func(*indexEntry) bool, recency func(*indexEntry) int64, drop func(*indexEntry)) {
+	for *pool+need > budget {
+		e := ix.oldestSampledLocked(excludeRel, has, recency)
+		if e == nil {
+			// Nothing left to evict: the caller sees the budget still
+			// exceeded and drops the payload it was trying to store.
+			return
+		}
+		drop(e)
 	}
-	var cands []candidate
+}
+
+// oldestSampledLocked returns the least recently used entry carrying a payload
+// among a bounded random sample of the index, or nil when no entry qualifies.
+// Iteration over a Go map starts at a random bucket, so the first
+// evictionSampleSize candidates are an unbiased sample.
+func (ix *Index) oldestSampledLocked(excludeRel string, has func(*indexEntry) bool, recency func(*indexEntry) int64) *indexEntry {
+	var oldest *indexEntry
+	var oldestOrder int64
+	examined := 0
 	for rel, e := range ix.entries {
 		if rel == excludeRel || !has(e) {
 			continue
 		}
-		cands = append(cands, candidate{rel: rel, order: recency(e)})
-	}
-	sort.Slice(cands, func(i, j int) bool { return cands[i].order < cands[j].order })
-
-	for _, c := range cands {
-		if *pool+need <= budget {
-			return
+		if order := recency(e); oldest == nil || order < oldestOrder {
+			oldest, oldestOrder = e, order
 		}
-		if e, ok := ix.entries[c.rel]; ok && has(e) {
-			drop(e)
+		if examined++; examined >= evictionSampleSize {
+			break
 		}
 	}
+	return oldest
 }
 
 // cacheContent records note content read outside a scan (e.g. GetNoteContent)

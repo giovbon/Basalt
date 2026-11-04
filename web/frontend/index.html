@@ -1676,8 +1676,9 @@
                                     >📁</button>
                                 </div>
                             </div>
-                            <!-- Dual-purpose: hint text OR root drop zone when dragging -->
+                            <!-- Root drop zone: only rendered while dragging, so the sidebar has no permanent hint box. -->
                             <div 
+                                x-show="draggedItem"
                                 class="text-xs px-2 py-1 mb-2 rounded transition-all font-medium text-center"
                                 :class="{
                                     'border-2 border-dashed bg-accent-light': draggedItem && dragOverFolder === '',
@@ -1696,8 +1697,7 @@
                                 @drop.prevent="if(draggedItem) onFolderDrop('')"
                                 style="height: 28px; line-height: 20px; display: flex; align-items: center; justify-content: center;"
                             >
-                                <span x-show="!draggedItem" x-text="t('sidebar.drag_hint')"></span>
-                                <span x-show="draggedItem" x-text="t('sidebar.root_folder')"></span>
+                                <span x-text="t('sidebar.root_folder')"></span>
                             </div>
                         </div>
                         
