@@ -11,6 +11,14 @@ import { ErrorHandler, encodeVaultPath, FilenameValidator } from './core/utils.j
 import { folderFromPath, filenameFromPath, inferTypeFromPath } from './lib/paths.js';
 import { foldForSearch, foldedIndexForOriginal, lineStartOffset } from './lib/search-fold.js';
 import { buildFolderTree, noteComparator, folderComparator } from './lib/folder-tree.js';
+import { applyEditorOutdent } from './lib/editor.js';
+import { scanTaskLines, toggleTaskAt, setAllTasks } from './lib/tasks.js';
+import {
+    previewMarkIndexForSourceOffset,
+    searchHiddenRegions,
+    sourceOffsetForLineColumn,
+    spanOverlapsRegions,
+} from './lib/search-preview.js';
 
 // Configuration and persisted settings live in core/config.js.
 
@@ -18,96 +26,7 @@ import { buildFolderTree, noteComparator, folderComparator } from './lib/folder-
 // ErrorHandler, encodeVaultPath and FilenameValidator live in core/utils.js.
 
 
-/** Max leading spaces Shift+Tab removes per line when matching one “tab indent” vs \t inserts. */
-const EDITOR_TAB_OUTDENT_MAX_SPACES = 4;
-
 const MEDIA_FORMATS_DISPLAY = 'JPG, PNG, GIF, WebP, MP3, MP4, PDF, MD';
-
-/** GFM task item as (everything up to `[`)(state). Literal spaces around the
- *  brackets, not \s, because that is what marked requires; the leading chain covers
- *  containers opened on the same line, e.g. `- > - [ ] x`, which marked does render.
- *  Missing a task marked renders is the one unsafe direction: see _scanTaskLines. */
-const TASK_ITEM_RE = /^(\s*(?:(?:[-*+]|\d{1,9}[.)]) +|>\s*)*(?:[-*+]|\d{1,9}[.)]) +\[)([ xX])(?=\] )/;
-
-function editorIndentRemoveLen(lineSegment) {
-    if (!lineSegment || lineSegment.length === 0) return 0;
-    if (lineSegment.charCodeAt(0) === 9 /* \t */) return 1;
-    let i = 0;
-    const max = Math.min(EDITOR_TAB_OUTDENT_MAX_SPACES, lineSegment.length);
-    while (i < max && lineSegment[i] === ' ') i++;
-    return i;
-}
-
-function editorOutdentChunk(chunk) {
-    if (chunk.length === 0) return { newChunk: chunk, changed: false };
-    const lines = chunk.split('\n');
-    const newLines = lines.map((line) => {
-        const n = editorIndentRemoveLen(line);
-        return n > 0 ? line.slice(n) : line;
-    });
-    const newChunk = newLines.join('\n');
-    return { newChunk, changed: newChunk !== chunk };
-}
-
-function editorRemovedBeforeInChunk(chunk, rel) {
-    const target = Math.min(Math.max(rel, 0), chunk.length);
-    let off = 0;
-    let removed = 0;
-    while (off < chunk.length && off < target) {
-        const nl = chunk.indexOf('\n', off);
-        const lineEnd = nl === -1 ? chunk.length : nl;
-        const lineSlice = chunk.slice(off, lineEnd);
-        const n = editorIndentRemoveLen(lineSlice);
-        if (target >= lineEnd) {
-            removed += n;
-            if (nl === -1) break;
-            off = lineEnd + 1;
-        } else {
-            const col = target - off;
-            removed += Math.min(col, n);
-            break;
-        }
-    }
-    return removed;
-}
-
-function editorMapCaretAfterOutdent(chunk, newChunk, rel) {
-    const r = Math.max(0, rel);
-    if (r >= chunk.length) return newChunk.length;
-    return r - editorRemovedBeforeInChunk(chunk, r);
-}
-
-/**
- * Shift+Tab outdent while “tab inserts tab” is enabled: remove one leading \t or up to 4 spaces per affected line.
- * @returns {{ changed: boolean, text: string, selStart: number, selEnd: number }}
- */
-function applyEditorOutdent(text, selStart, selEnd) {
-    const a = Math.min(selStart, selEnd);
-    const b = Math.max(selStart, selEnd);
-    const blockStart = text.lastIndexOf('\n', Math.max(0, a - 1)) + 1;
-    const ref = b > a ? b - 1 : a;
-    let blockEnd = text.indexOf('\n', ref);
-    if (blockEnd === -1) blockEnd = text.length;
-
-    const chunk = text.slice(blockStart, blockEnd);
-    const { newChunk, changed } = editorOutdentChunk(chunk);
-    if (!changed) {
-        return { changed: false, text, selStart, selEnd };
-    }
-
-    const newText = text.slice(0, blockStart) + newChunk + text.slice(blockEnd);
-    const anchorRel = a - blockStart;
-    const focusRel = b - blockStart;
-    const newA = blockStart + editorMapCaretAfterOutdent(chunk, newChunk, anchorRel);
-    const newB = blockStart + editorMapCaretAfterOutdent(chunk, newChunk, focusRel);
-
-    return {
-        changed: true,
-        text: newText,
-        selStart: Math.min(newA, newB),
-        selEnd: Math.max(newA, newB),
-    };
-}
 
 function noteApp() {
     return {
@@ -3185,33 +3104,15 @@ function noteApp() {
             const index = parseInt(box.getAttribute('data-task-index'), 10);
             if (!Number.isInteger(index)) return false;
 
-            const taskLines = this._scanTaskLines(this.noteContent);
-            const clickedLine = taskLines[index];
-            if (clickedLine === undefined) return false;
+            const result = setAllTasks(this.noteContent, index);
+            if (!result.found) return false;
+            if (!result.changed) return true;
 
-            const lines = this.noteContent.split('\n');
-            const clicked = lines[clickedLine].match(TASK_ITEM_RE);
-            if (!clicked) return false;
-
-            // Intent comes from the source, not the DOM: clicking the box has already
-            // flipped the input, clicking the text next to it has not.
-            const nextState = clicked[2] === ' ' ? 'x' : ' ';
-            let changed = 0;
-
-            for (const lineIdx of taskLines) {
-                const updated = lines[lineIdx].replace(TASK_ITEM_RE, (m, prefix) => prefix + nextState);
-                if (updated !== lines[lineIdx]) {
-                    lines[lineIdx] = updated;
-                    changed++;
-                }
-            }
-            if (!changed) return true;
-
-            this.noteContent = lines.join('\n');
+            this.noteContent = result.text;
             this.autoSave();
             this.toast(
-                this.t(nextState === 'x' ? 'editor.tasks_all_checked' : 'editor.tasks_all_unchecked',
-                    { changed, total: taskLines.length })
+                this.t(result.nextState === 'x' ? 'editor.tasks_all_checked' : 'editor.tasks_all_unchecked',
+                    { changed: result.changeCount, total: result.total })
             );
             return true;
         },
@@ -3259,22 +3160,13 @@ function noteApp() {
             if (!Number.isInteger(index)) return false;
 
             // Rescanned per click: the note can change between render and click.
-            const lineIdx = this._scanTaskLines(this.noteContent)[index];
-            if (lineIdx === undefined) return false;
+            const result = toggleTaskAt(this.noteContent, index);
+            if (!result.changed) return false;
 
-            const lines = this.noteContent.split('\n');
-            const oldLine = lines[lineIdx];
-            const toggled = oldLine.replace(
-                TASK_ITEM_RE,
-                (match, prefix, state) => prefix + (state === ' ' ? 'x' : ' ')
-            );
-            if (toggled === oldLine) return false;
-
-            lines[lineIdx] = toggled;
-            this.noteContent = lines.join('\n');
+            this.noteContent = result.text;
             if (!this.isUndoRedo) this.pushToHistory();
             this.lastSaved = false;
-            this._persistTaskToggle(oldLine, toggled);
+            this._persistTaskToggle(result.oldLine, result.newLine);
             return true;
         },
 
@@ -4349,251 +4241,23 @@ function noteApp() {
             this._scrollPreviewToElement(marks[index], 100, { suppressSync: true });
         },
 
-        // Index of the <mark> that corresponds to a source offset, or
-        //   -1 when that occurrence never becomes preview text, and
-        //   -2 when the source-side count disagrees with the rendered marks.
+        // Index of the <mark> that corresponds to a source offset (see lib/search-preview.js).
         _previewMarkIndexForSourceOffset(offset, foldedTerm, markCount) {
-            const content = this.noteContent || '';
-            if (!content) return -2;
-
-            const folded = this._foldForSearch(content);
-            const regions = this._searchHiddenRegions(content);
-            if (this._spanOverlapsRegions(regions, offset, offset + 1)) return -1;
-
-            let before = 0;
-            let total = 0;
-            let from = 0;
-            while (true) {
-                const idx = folded.text.indexOf(foldedTerm, from);
-                if (idx === -1) break;
-                from = idx + foldedTerm.length;
-
-                const start = folded.map[idx];
-                const end = folded.map[idx + foldedTerm.length];
-                if (this._spanOverlapsRegions(regions, start, end)) continue;
-
-                total++;
-                if (start < offset) before++;
-            }
-
-            // Only trust the numbering when both sides agree on the amount of
-            // highlightable occurrences; a mismatch means one of the hidden
-            // region rules above is off for this note.
-            if (total !== markCount || before >= markCount) return -2;
-            return before;
+            return previewMarkIndexForSourceOffset(this.noteContent || '', offset, foldedTerm, markCount);
         },
 
-        // 0-based character offset of a 1-based line:column (the column is in
-        // runes, as reported by the search API). Clamped to the end of the
-        // line so a stale column cannot spill into the next one.
+        // 0-based character offset of a 1-based line:column (see lib/search-preview.js).
         _sourceOffsetForLineColumn(content, line, column = 1) {
-            let offset = this._lineStartOffset(content, line);
-            let rune = 1;
-            while (offset < content.length && rune < column) {
-                const code = content.codePointAt(offset);
-                if (code === 10) break; // '\n'
-                offset += code > 0xFFFF ? 2 : 1;
-                rune++;
-            }
-            return offset;
+            return sourceOffsetForLineColumn(content, line, column);
         },
 
-        // Source spans that never show up as text in the preview. Mirrors
-        // highlightInPreview's "skip code" rule plus the constructs the
-        // renderer consumes instead of emitting as text: frontmatter, fenced
-        // and inline code, HTML tags, link destinations, image alt text, the
-        // target half of [[target|display]] and reference definitions.
-        // Counting occurrences this way lets a clicked sidebar row be mapped
-        // onto the exact <mark>.
+        // Hidden preview regions and span checks live in lib/search-preview.js.
         _searchHiddenRegions(content) {
-            const regions = [];
-            const add = (start, end) => {
-                if (end > start) regions.push([start, end]);
-            };
-
-            // Line starts, so every rule can work with whole lines.
-            const lineStarts = [0];
-            for (let p = content.indexOf('\n'); p !== -1; p = content.indexOf('\n', p + 1)) {
-                lineStarts.push(p + 1);
-            }
-            const lineEnd = (i) => (i + 1 < lineStarts.length ? lineStarts[i + 1] - 1 : content.length);
-
-            // Frontmatter, fenced code and reference definitions.
-            let fence = null;
-            for (let i = 0; i < lineStarts.length; i++) {
-                const line = content.slice(lineStarts[i], lineEnd(i));
-
-                // The renderer strips YAML frontmatter: opening '---' line,
-                // then everything up to the next line that trims to '---'.
-                if (i === 0 && line.trim() === '---') {
-                    let close = -1;
-                    for (let k = 1; k < lineStarts.length; k++) {
-                        if (content.slice(lineStarts[k], lineEnd(k)).trim() === '---') {
-                            close = k;
-                            break;
-                        }
-                    }
-                    if (close !== -1) {
-                        add(0, lineEnd(close));
-                        i = close;
-                        continue;
-                    }
-                }
-
-                if (fence) {
-                    if (fence.closeRe.test(line)) {
-                        add(fence.start, lineEnd(i));
-                        fence = null;
-                    }
-                    continue;
-                }
-
-                const open = line.match(/^\s{0,3}(`{3,}|~{3,})/);
-                if (open) {
-                    const ch = open[1][0];
-                    fence = {
-                        start: lineStarts[i],
-                        closeRe: new RegExp(
-                            '^\\s{0,3}' + (ch === '`' ? '`' : '~') + '{' + open[1].length + ',}\\s*$'
-                        ),
-                    };
-                    continue;
-                }
-
-                if (/^\s{0,3}\[[^\]]+\]:/.test(line)) add(lineStarts[i], lineEnd(i));
-            }
-            if (fence) add(fence.start, content.length);
-
-            // Inline constructs, scanned once over the whole document.
-            // Overlapping the line-based regions above is harmless.
-            const TAG_RE = /<\/?[A-Za-z][A-Za-z0-9-]*(?:\s[^<>]*)?\/?>/y;
-            let i = 0;
-            while (i < content.length) {
-                const ch = content[i];
-
-                if (ch === '`') {
-                    let runLen = 1;
-                    while (content[i + runLen] === '`') runLen++;
-                    let j = i + runLen;
-                    let closed = -1;
-                    const limit = Math.min(content.length, i + 5000);
-                    while (j < limit) {
-                        if (content[j] === '`') {
-                            let closeLen = 1;
-                            while (content[j + closeLen] === '`') closeLen++;
-                            if (closeLen === runLen) {
-                                closed = j + closeLen;
-                                break;
-                            }
-                            j += closeLen;
-                            continue;
-                        }
-                        // An inline code span cannot cross a blank line.
-                        if (content[j] === '\n' && content[j + 1] === '\n') break;
-                        j++;
-                    }
-                    if (closed !== -1) {
-                        add(i, closed);
-                        i = closed;
-                    } else {
-                        i += runLen;
-                    }
-                    continue;
-                }
-
-                if (ch === '<') {
-                    if (content.startsWith('<!--', i)) {
-                        const end = content.indexOf('-->', i + 4);
-                        if (end !== -1) {
-                            add(i, end + 3);
-                            i = end + 3;
-                            continue;
-                        }
-                    }
-                    TAG_RE.lastIndex = i;
-                    const tag = TAG_RE.exec(content);
-                    if (tag) {
-                        add(i, i + tag[0].length);
-                        i += tag[0].length;
-                        continue;
-                    }
-                    if (content.startsWith('<!', i) || content.startsWith('<?', i)) {
-                        const gt = content.indexOf('>', i);
-                        if (gt !== -1) {
-                            add(i, gt + 1);
-                            i = gt + 1;
-                            continue;
-                        }
-                    }
-                    i++;
-                    continue;
-                }
-
-                if (ch === '!' && content[i + 1] === '[') {
-                    // ![alt](url) and ![[media]]: neither alt text nor the
-                    // media name is rendered as note text.
-                    let depth = 0;
-                    let j = i + 1;
-                    for (; j < content.length; j++) {
-                        if (content[j] === '[') depth++;
-                        else if (content[j] === ']') {
-                            depth--;
-                            if (depth === 0) break;
-                        }
-                    }
-                    if (j < content.length) {
-                        add(i, j + 1);
-                        i = j + 1;
-                    } else {
-                        i++;
-                    }
-                    continue;
-                }
-
-                if (ch === '[' && content[i + 1] === '[') {
-                    // [[target|display]]: only the display half is rendered.
-                    const close = content.indexOf(']]', i + 2);
-                    if (close !== -1) {
-                        const pipe = content.indexOf('|', i + 2);
-                        if (pipe !== -1 && pipe < close) add(i, pipe + 1);
-                        i = close + 2;
-                        continue;
-                    }
-                    i += 2;
-                    continue;
-                }
-
-                if (ch === ']' && content[i + 1] === '(') {
-                    // Link destination (with optional title), never text.
-                    let depth = 0;
-                    let j = i + 1;
-                    for (; j < content.length; j++) {
-                        if (content[j] === '(') depth++;
-                        else if (content[j] === ')') {
-                            depth--;
-                            if (depth === 0) break;
-                        }
-                    }
-                    if (j < content.length) {
-                        add(i, j + 1);
-                        i = j + 1;
-                    } else {
-                        i++;
-                    }
-                    continue;
-                }
-
-                i++;
-            }
-
-            return regions;
+            return searchHiddenRegions(content);
         },
 
         _spanOverlapsRegions(regions, start, end) {
-            for (const [regionStart, regionEnd] of regions) {
-                if (start < regionEnd && end > regionStart) return true;
-            }
-            return false;
+            return spanOverlapsRegions(regions, start, end);
         },
 
         // Scroll `el` (a preview descendant) to `offset` px below the top of
@@ -6612,40 +6276,7 @@ function noteApp() {
          * pass that check with everything shifted by one.
          */
         _scanTaskLines(source) {
-            if (typeof source !== 'string' || !source) return [];
-            const lines = source.split('\n');
-            const taskLines = [];
-            let startIdx = 0;
-
-            if (lines[0] && lines[0].trim() === '---') {
-                for (let i = 1; i < lines.length; i++) {
-                    if (lines[i].trim() === '---') {
-                        startIdx = i + 1;
-                        break;
-                    }
-                }
-            }
-
-            // Indented fences count here: one nested in a list item still hides tasks.
-            const FENCE = /^\s*(`{3,}|~{3,})/;
-            let openFence = null;
-
-            for (let i = startIdx; i < lines.length; i++) {
-                const fence = lines[i].match(FENCE);
-                if (openFence) {
-                    if (fence && fence[1][0] === openFence[0] && fence[1].length >= openFence.length) {
-                        openFence = null;
-                    }
-                    continue;
-                }
-                if (fence) {
-                    openFence = fence[1];
-                    continue;
-                }
-                if (TASK_ITEM_RE.test(lines[i])) taskLines.push(i);
-            }
-
-            return taskLines;
+            return scanTaskLines(source);
         },
 
         /**
