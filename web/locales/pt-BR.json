@@ -237,7 +237,7 @@
     "confirm_delete": "Excluir \"{{name}}\"?",
     "upload_failed": "Falha ao enviar o arquivo",
     "no_valid_files": "Nenhum arquivo válido encontrado. Suportados: {{formats}}",
-    "upload_button": "Enviar arquivo",
+    "upload_button": "Enviar",
     "upload_success": "{{count}} arquivo(s) enviado(s) com sucesso"
   },
   "move": {

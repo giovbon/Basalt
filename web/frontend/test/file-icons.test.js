@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { treeIconKind, treeIconSvg, treeKindClass } from '../src/lib/file-icons.js';
+import { typeIconSvg, treeIconKind, treeIconSvg, treeKindClass } from '../src/lib/file-icons.js';
 
 // The sidebar is colour-coded by file type: folders amber, .md notes light
 // blue, PDFs red, other media keeps its emoji. These helpers are the whole
@@ -53,4 +53,18 @@ test('treeKindClass colours folders, notes and pdfs, everything else is media', 
     assert.equal(treeKindClass('pdf'), 'tree--pdf');
     assert.equal(treeKindClass(null), 'tree--media');
     assert.equal(treeKindClass('bogus'), 'tree--media');
+});
+
+test('typeIconSvg covers notes, pdfs and every media type', () => {
+    for (const type of ['folder', 'note', 'document', 'image', 'audio', 'video']) {
+        const svg = typeIconSvg(type);
+        assert.ok(svg.startsWith('<svg '), type);
+        assert.match(svg, new RegExp(`tree-icon--${type === 'document' ? 'pdf' : type}`), type);
+    }
+    assert.equal(typeIconSvg('bogus'), '');
+});
+
+test('typeIconSvg honours the requested size for cards and lists', () => {
+    assert.match(typeIconSvg('note', { size: 18 }), /width="18" height="18"/);
+    assert.match(typeIconSvg('image', { size: 16 }), /width="16" height="16"/);
 });

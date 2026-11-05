@@ -98,8 +98,10 @@ func ListThemes(fsys fs.FS) ([]ThemeInfo, error) {
 		}
 
 		themes = append(themes, ThemeInfo{
-			ID:   id,
-			Name: icon + " " + name,
+			ID: id,
+			// Plain text: the settings <select> renders names with x-text, and
+			// a native option cannot contain an SVG icon.
+			Name: name,
 			Type: themeType,
 			Icon: icon,
 		})

@@ -260,13 +260,5 @@ export function createState() {
 
         // Sort mode configuration
         sortModes: ['a-z', 'z-a', 'newest', 'oldest', 'largest', 'smallest'],
-        sortModeIcons: {
-            'a-z': 'A↓',
-            'z-a': 'Z↓',
-            'newest': '🕐↓',
-            'oldest': '🕐↑',
-            'largest': '📄↓',
-            'smallest': '📄↑'
-        },
     };
 }

@@ -363,14 +363,15 @@ export function createBootstrap() {
             try {
                 const data = await api.getJSON('/api/themes');
                 
-                // Use theme names directly from backend (already include emojis)
+                // Theme names are plain text; the optional icon field is not
+                // rendered in the select because a native <option> cannot hold SVG.
                 this.availableThemes = data.themes;
             } catch (error) {
                 console.error('Failed to load themes:', error);
                 // Fallback to default themes
                 this.availableThemes = [
-                    { id: 'light', name: '🌞 Light' },
-                    { id: 'dark', name: '🌙 Dark' }
+                    { id: 'light', name: 'Light' },
+                    { id: 'dark', name: 'Dark' }
                 ];
             }
         },

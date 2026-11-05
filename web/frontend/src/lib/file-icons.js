@@ -5,7 +5,7 @@
 // PDF variant fills the corner fold so it stays distinguishable from a note
 // even before the red colour is taken into account.
 
-const SVG_OPEN = '<svg class="tree-icon{cls}" viewBox="0 0 24 24" width="14" height="14" '
+const SVG_OPEN = '<svg class="tree-icon {cls}" viewBox="0 0 24 24" width="{size}" height="{size}" '
     + 'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" '
     + 'stroke-linejoin="round" aria-hidden="true">';
 const SVG_CLOSE = '</svg>';
@@ -21,11 +21,43 @@ const PDF_PATHS =
     '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>'
     + '<path d="M14 2v6h6" fill="currentColor" stroke="none"/>';
 
+const IMAGE_PATHS =
+    '<rect x="3" y="3" width="18" height="18" rx="2"/>'
+    + '<circle cx="8.5" cy="8.5" r="1.5"/>'
+    + '<path d="m21 15-5-5L5 21"/>';
+
+const AUDIO_PATHS =
+    '<path d="M9 18V5l12-2v13"/>'
+    + '<circle cx="6" cy="18" r="3"/>'
+    + '<circle cx="18" cy="16" r="3"/>';
+
+const VIDEO_PATHS =
+    '<rect x="2" y="6" width="14" height="12" rx="2"/>'
+    + '<path d="m22 8-6 4 6 4V8z"/>';
+
 const KINDS = {
-    folder: { cls: ' tree-icon--folder', paths: FOLDER_PATH },
-    note: { cls: ' tree-icon--note', paths: NOTE_PATHS },
-    pdf: { cls: ' tree-icon--pdf', paths: PDF_PATHS },
+    folder: { cls: 'tree-icon--folder', paths: FOLDER_PATH },
+    note: { cls: 'tree-icon--note', paths: NOTE_PATHS },
+    pdf: { cls: 'tree-icon--pdf', paths: PDF_PATHS },
 };
+
+// Media shares the stroked icon language of the tree; the emoji they used to
+// carry made rows visually inconsistent across platforms.
+const MEDIA_KINDS = {
+    image: { cls: 'tree-icon--image', paths: IMAGE_PATHS },
+    audio: { cls: 'tree-icon--audio', paths: AUDIO_PATHS },
+    video: { cls: 'tree-icon--video', paths: VIDEO_PATHS },
+};
+
+function iconMarkup(kind, size) {
+    const spec = KINDS[kind] || MEDIA_KINDS[kind];
+    if (!spec) return '';
+    return SVG_OPEN
+        .replace('{cls}', spec.cls)
+        .replaceAll('{size}', String(size))
+        + spec.paths
+        + SVG_CLOSE;
+}
 
 /**
  * Which tree icon a NoteRecord type maps to.
@@ -46,9 +78,21 @@ export function treeIconKind(type) {
  * @returns {string} inline <svg> markup, empty string for unknown kinds
  */
 export function treeIconSvg(kind) {
-    const spec = KINDS[kind];
-    if (!spec) return '';
-    return SVG_OPEN.replace('{cls}', spec.cls) + spec.paths + SVG_CLOSE;
+    if (!KINDS[kind]) return '';
+    return iconMarkup(kind, 14);
+}
+
+/**
+ * Icon for any file type shown in the UI (sidebar rows, homepage cards and
+ * lists). Unlike treeIconKind(), this also covers images, audio and video.
+ * @param {string} type NoteRecord.type ('note', 'document', 'image', …)
+ * @param {{size?: number}} [options]
+ * @returns {string} inline <svg> markup, empty string for unknown types
+ */
+export function typeIconSvg(type, { size = 14 } = {}) {
+    const kind = treeIconKind(type) || (MEDIA_KINDS[type] ? type : null);
+    if (!kind) return '';
+    return iconMarkup(kind, size);
 }
 
 /** Class that colours the row for a given tree kind. */

@@ -61,8 +61,8 @@ export function createUi() {
                 let top = rect.bottom + 4;
                 let left = rect.left;
                 
-                const dropdownWidth = 200;
-                const dropdownHeight = 150;
+                const dropdownWidth = 184;
+                const dropdownHeight = 92;
                 if (left + dropdownWidth > window.innerWidth) {
                     left = rect.right - dropdownWidth;
                 }

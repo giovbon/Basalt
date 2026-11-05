@@ -193,6 +193,11 @@
 .markdown-preview a[data-wikilink].wikilink-broken:hover {
     opacity: 1;
 }
+.markdown-preview .wikilink-broken svg {
+    width: 1em;
+    height: 1em;
+    vertical-align: -0.125em;
+}
 
 /* Standard internal links (non-wikilink, e.g. [text](path)) */
 .markdown-preview a:not([href^="http"]):not([href^="https"]):not([href^="//"]):not([href^="mailto:"]):not([data-wikilink]) {
@@ -317,8 +322,16 @@
     color: var(--accent-primary);
 }
 .markdown-preview .pdf-link-content {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
     font-weight: 600;
     color: var(--text-primary);
+}
+.markdown-preview .pdf-link-content svg {
+    width: 1em;
+    height: 1em;
+    flex-shrink: 0;
 }
 .markdown-preview .pdf-link-note {
     font-size: 0.75rem;
@@ -344,6 +357,11 @@
 .markdown-preview .callout-icon {
     font-size: 1.1em;
     line-height: 1;
+}
+.markdown-preview .callout-icon-svg {
+    width: 1em;
+    height: 1em;
+    display: block;
 }
 .markdown-preview .callout-body > :first-child { margin-top: 0; }
 .markdown-preview .callout-body > :last-child  { margin-bottom: 0; }

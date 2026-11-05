@@ -7,6 +7,7 @@ const MEDIA_FORMATS_DISPLAY = 'JPG, PNG, GIF, WebP, MP3, MP4, PDF, MD';
 
 import { ErrorHandler, encodeVaultPath, FilenameValidator } from '../core/utils.js';
 import * as api from '../core/api.js';
+import { typeIconSvg } from '../lib/file-icons.js';
 
 export function createMedia() {
     return {
@@ -170,7 +171,7 @@ export function createMedia() {
         },
         
         /**
-         * 📤 global picker (sidebar / homepage buttons): upload files from anywhere,
+         * Global picker (sidebar / homepage buttons): upload files from anywhere,
          * including when no note is open. Media lands in the current folder's
          * `_attachments`; .md files are imported as new notes. When a note
          * is open its embeds are inserted at the cursor as usual.
@@ -298,7 +299,7 @@ export function createMedia() {
         },
         
         /**
-         * 📎 toolbar button: upload the files picked in the dialog and insert
+         * Toolbar attach button: upload the files picked in the dialog and insert
          * their embeds at the cursor. Same acceptance rules as drop/paste
          * (isAttachableMediaFile); the backend saves them into the note's
          * _attachments folder with a collision-proof timestamp suffix.
@@ -496,15 +497,9 @@ export function createMedia() {
             return null;
         },
         
-        // Get icon for media type
+        // Inline SVG icon for any file type (notes, media and PDFs).
         getMediaIcon(type) {
-            const icons = {
-                image: '🖼️',
-                audio: '🎵',
-                video: '🎬',
-                document: '📄',
-            };
-            return icons[type] || '';
+            return typeIconSvg(type);
         },
         
         // Open a note or media file (unified handler for sidebar/homepage clicks)

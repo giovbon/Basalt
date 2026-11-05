@@ -5,6 +5,7 @@
 
 import * as api from '../core/api.js';
 import { scanTaskLines, toggleTaskAt, setAllTasks } from '../lib/tasks.js';
+import { typeIconSvg } from '../lib/file-icons.js';
 
 export function createPreview() {
     return {
@@ -341,7 +342,7 @@ export function createPreview() {
                         // Add error indicator to the code block
                         const errorMsg = document.createElement('div');
                         errorMsg.style.cssText = 'color: var(--error); padding: 10px; border-left: 3px solid var(--error); margin-top: 10px;';
-                        errorMsg.textContent = `⚠️ Mermaid diagram error: ${error.message}`;
+                        errorMsg.textContent = `Mermaid diagram error: ${error.message}`;
                         pre.parentElement.insertBefore(errorMsg, pre.nextSibling);
                     }
                 }
@@ -462,7 +463,16 @@ export function createPreview() {
             // top-level code block is not misread as a callout.
             {
                 const CALLOUT_RE = /^>\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*(.*)$/i;
-                const CALLOUT_ICONS = { note: 'ℹ️', tip: '💡', important: '❗', warning: '⚠️', caution: '🛑' };
+                const svg = (paths) => '<svg class="callout-icon-svg" viewBox="0 0 24 24" '
+                    + 'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" '
+                    + 'stroke-linejoin="round" aria-hidden="true">' + paths + '</svg>';
+                const CALLOUT_ICONS = {
+                    note: svg('<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>'),
+                    tip: svg('<path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z"/>'),
+                    important: svg('<circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/>'),
+                    warning: svg('<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/>'),
+                    caution: svg('<path d="M7.86 2h8.28L22 7.86v8.28L16.14 22H7.86L2 16.14V7.86L7.86 2z"/><path d="M12 8v4"/><path d="M12 16h.01"/>'),
+                };
                 const CALLOUT_TITLES = { note: 'Note', tip: 'Tip', important: 'Important', warning: 'Warning', caution: 'Caution' };
                 // Fence opener at 0-3 spaces indent (CommonMark). Captured
                 // group holds the fence chars so the closer must match char + length.
@@ -608,7 +618,7 @@ export function createPreview() {
                     // Media not found - return broken indicator
                     const safeFilename = filename.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
                     const mediaType = self.getMediaType(filename);
-                    const icon = mediaType === 'audio' ? '🎵' : mediaType === 'video' ? '🎬' : mediaType === 'document' ? '📄' : '🖼️';
+                    const icon = typeIconSvg(mediaType || 'image');
                     return `<span class="wikilink-broken" title="Media not found">${icon} ${safeFilename}</span>`;
                 }
             );
@@ -803,7 +813,10 @@ export function createPreview() {
                         link.rel = 'noopener noreferrer';
                         link.className = 'pdf-link';
                         link.title = `Open ${safeAlt}`;
-                        link.innerHTML = `<span class="pdf-link-content">📄 ${safeAlt}</span><span class="pdf-link-note">Opens in new tab</span>`;
+                        link.innerHTML = '<span class="pdf-link-content">'
+                            + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+                            + '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>'
+                            + '</svg> ' + safeAlt + '</span><span class="pdf-link-note">Opens in new tab</span>';
                         img.replaceWith(link);
                         return;
                     }

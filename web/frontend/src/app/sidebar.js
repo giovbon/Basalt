@@ -49,9 +49,16 @@ export function createSidebar() {
             this.buildFolderTree();
         },
 
-        // Get current sort icon
+        // Generic sort glyph with the arrow following the current direction.
         getSortIcon() {
-            return this.sortModeIcons[this.sortMode] || 'A↓';
+            const ascending = ['z-a', 'oldest', 'smallest'].includes(this.sortMode);
+            const arrow = ascending
+                ? '<path d="M20 19V5"/><path d="m17 8 3-3 3 3"/>'
+                : '<path d="M20 5v14"/><path d="m17 16 3 3 3-3"/>';
+            return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" '
+                + 'stroke="currentColor" stroke-width="2" stroke-linecap="round" '
+                + 'stroke-linejoin="round" aria-hidden="true">'
+                + '<path d="M3 6h11M3 12h8M3 18h5"/>' + arrow + '</svg>';
         },
 
         // Get sort comparator based on current mode (for notes)
@@ -568,7 +575,12 @@ export function createSidebar() {
                                 onclick="window.$root.handleRenameFolderClick(this, event)"
                                 class="tree-action"
                                 title="${esc(this.t('sidebar.rename_folder'))}"
-                            >✏️</button>
+                            >
+                                <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 20h9"></path>
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"></path>
+                                </svg>
+                            </button>
                             <button 
                                 data-path="${esc(folder.path)}"
                                 data-name="${esc(folder.name)}"
@@ -621,12 +633,10 @@ export function createSidebar() {
             const isCurrentMedia = this.currentMedia === note.path;
             const isCurrent = isMediaFile ? isCurrentMedia : isCurrentNote;
 
-            // .md -> blue document, .pdf -> red document, other media keeps the
-            // emoji it already had (images/audio/video are recognised by shape).
+            // .md -> blue document, .pdf -> red document, media gets its own
+            // stroked icon (image/audio/video) so rows stay visually consistent.
             const kind = treeIconKind(note.type);
-            const icon = kind
-                ? treeIconSvg(kind)
-                : `<span class="tree-emoji" aria-hidden="true">${this.getMediaIcon(note.type)}</span>`;
+            const icon = kind ? treeIconSvg(kind) : this.getMediaIcon(note.type);
             // Media rows show their extension: the name is stored without one,
             // so "orcamento" alone would not tell a PDF from a note.
             const extMatch = isMediaFile ? note.path.match(/\.[^./]+$/) : null;
