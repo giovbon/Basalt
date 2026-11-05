@@ -8,10 +8,8 @@ import { applyEditorOutdent } from '../lib/editor.js';
 export function createEditor() {
     return {
 
-        // Handle Tab key in editor (inserts tab if setting enabled; Shift+Tab outdents matching lines)
+        // Handle Tab key in editor (inserts tab; Shift+Tab outdents matching lines)
         handleTabKey(event) {
-            if (!this.tabInsertsTab) return;
-
             const textarea = event.target;
             const start = textarea.selectionStart;
             const end = textarea.selectionEnd;
