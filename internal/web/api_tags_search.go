@@ -24,22 +24,24 @@ func NewTagsSearchHandler(cfg *config.Config, v *vault.Vault) *TagsSearchHandler
 }
 
 func (h *TagsSearchHandler) GetAllTags(w http.ResponseWriter, r *http.Request) {
-	notes, _, err := h.vault.ScanNotes(false)
+	tagCounts, err := h.vault.TagCounts()
 	if err != nil {
 		RespondError(w, http.StatusInternalServerError, "Failed to load tags")
 		return
 	}
 
-	tagCounts := make(map[string]int)
-	for _, n := range notes {
-		for _, tag := range n.Tags {
-			tagCounts[tag]++
-		}
-	}
-
 	RespondJSON(w, http.StatusOK, map[string]any{
 		"tags": tagCounts,
 	})
+}
+
+// tagMatches compares a note tag with an already-lowercased query tag. The
+// equality fast path avoids an allocation for the common already-lowercase tag.
+func tagMatches(tag, tagLower string) bool {
+	if tag == tagLower {
+		return true
+	}
+	return strings.ToLower(tag) == tagLower
 }
 
 type TagNoteItem struct {
@@ -49,6 +51,10 @@ type TagNoteItem struct {
 	Modified string   `json:"modified"`
 	Size     int64    `json:"size"`
 	Tags     []string `json:"tags"`
+
+	// pathLower is the sort key, computed once when the item is built instead
+	// of on every comparison.
+	pathLower string
 }
 
 type GetTagResponse struct {
@@ -72,26 +78,27 @@ func (h *TagsSearchHandler) GetNotesByTag(w http.ResponseWriter, r *http.Request
 	for _, n := range notes {
 		hasTag := false
 		for _, t := range n.Tags {
-			if strings.ToLower(t) == tagLower {
+			if tagMatches(t, tagLower) {
 				hasTag = true
 				break
 			}
 		}
 		if hasTag {
 			matched = append(matched, TagNoteItem{
-				Name:     n.Name,
-				Path:     n.Path,
-				Folder:   n.Folder,
-				Modified: n.Modified,
-				Size:     n.Size,
-				Tags:     n.Tags,
+				Name:      n.Name,
+				Path:      n.Path,
+				Folder:    n.Folder,
+				Modified:  n.Modified,
+				Size:      n.Size,
+				Tags:      n.Tags,
+				pathLower: strings.ToLower(n.Path),
 			})
 		}
 	}
 
 	// Python: sorted by path.lower()
 	sort.Slice(matched, func(i, j int) bool {
-		return strings.ToLower(matched[i].Path) < strings.ToLower(matched[j].Path)
+		return matched[i].pathLower < matched[j].pathLower
 	})
 
 	limit, offset := ParsePaginationParams(r)
@@ -162,10 +169,8 @@ func (h *TagsSearchHandler) SearchNotes(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Python searches candidates sorted by MTime descending
-	sort.Slice(notes, func(i, j int) bool {
-		return notes[i].MTime > notes[j].MTime
-	})
+	// The snapshot is already ordered by MTime descending, so no per-request
+	// sort of the whole vault is needed here.
 
 	limit, offset := ParsePaginationParams(r)
 
@@ -193,9 +198,9 @@ func (h *TagsSearchHandler) SearchNotes(w http.ResponseWriter, r *http.Request) 
 		}
 
 		// Cheap reject first: the accent-folded text is cached per note in the
-		// index, so a query matching nothing never touches note content (and
-		// never reads a single file when the content cache is cold or full).
-		folded, err := h.vault.GetFoldedContent(n.Path)
+		// index and keyed by the stat the scan already took, so a query that
+		// matches nothing never reads or stats a single file.
+		folded, err := h.vault.FoldedContentForRecord(n)
 		if err != nil {
 			continue
 		}
@@ -208,19 +213,25 @@ func (h *TagsSearchHandler) SearchNotes(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 
-		content, err := h.vault.GetNoteContent(n.Path)
+		// Only notes on the requested page pay for content and snippet
+		// extraction. The content and folded text come from one stat so the
+		// spans can be mapped without re-folding the note.
+		content, folded, err := h.vault.NoteContentAndFolded(n.Path)
 		if err != nil {
 			continue
 		}
 
-		spans, totalMatches := search.FoldedMatchSpansWithCount(content, foldedQuery, maxSearchMatchesPerNote)
+		spans, totalMatches := search.FoldedMatchSpansInFolded(content, folded, foldedQuery, maxSearchMatchesPerNote)
 		if totalMatches == 0 {
 			continue
 		}
 
+		// Line starts are computed once per note; locating each match then
+		// costs a binary search instead of two full scans of the content.
+		lineIndex := search.BuildLineIndex(content)
 		var matches []search.SearchMatch
 		for _, sp := range spans {
-			lineNum, column, snippet := search.ExtractSnippet(content, sp)
+			lineNum, column, snippet := search.ExtractSnippetAt(content, sp, lineIndex)
 			matches = append(matches, search.SearchMatch{
 				LineNumber: lineNum,
 				Column:     column,

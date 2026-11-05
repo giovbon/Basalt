@@ -131,3 +131,73 @@ func TestSpansBoundariesPinByteOffsets(t *testing.T) {
 		}
 	}
 }
+
+// TestFoldedMatchSpansInFoldedMatchesSelfFold pins the search path that reuses
+// the cached FoldContent: reusing the fold must produce exactly the spans the
+// self-contained extractor reports.
+func TestFoldedMatchSpansInFoldedMatchesSelfFold(t *testing.T) {
+	cases := []struct{ content, query string }{
+		{"plain ASCII text", "text"},
+		{"coração e CORACAO", "coracao"},
+		{"CAFÉ com açúcar, café", "cafe"},
+		{"decomposed a\u0301 pair a\u0301", "a"},
+		{"x\u0301y and xy", "xy"},
+		{"sem match aqui", "zzz"},
+	}
+	for _, tc := range cases {
+		foldedQuery := Fold(tc.query)
+		foldedContent := FoldContent(tc.content)
+		wantSpans, wantTotal := FoldedMatchSpansWithCount(tc.content, foldedQuery, 2)
+		gotSpans, gotTotal := FoldedMatchSpansInFolded(tc.content, foldedContent, foldedQuery, 2)
+
+		if gotTotal != wantTotal {
+			t.Errorf("FoldedMatchSpansInFolded(%q, %q) total = %d, want %d", tc.content, tc.query, gotTotal, wantTotal)
+		}
+		if len(gotSpans) != len(wantSpans) {
+			t.Fatalf("FoldedMatchSpansInFolded(%q, %q) spans = %#v, want %#v", tc.content, tc.query, gotSpans, wantSpans)
+		}
+		for i := range wantSpans {
+			if gotSpans[i] != wantSpans[i] {
+				t.Errorf("FoldedMatchSpansInFolded(%q, %q) span[%d] = %#v, want %#v", tc.content, tc.query, i, gotSpans[i], wantSpans[i])
+			}
+		}
+	}
+}
+
+// TestFoldedMatchSpansInFoldedFallsBackOnStaleFold verifies a cached fold that
+// does not correspond to the content cannot skew spans.
+func TestFoldedMatchSpansInFoldedFallsBackOnStaleFold(t *testing.T) {
+	content := "coração e CORACAO"
+	query := Fold("coracao")
+
+	wantSpans, wantTotal := FoldedMatchSpansWithCount(content, query, 0)
+	gotSpans, gotTotal := FoldedMatchSpansInFolded(content, "stale", query, 0)
+
+	if gotTotal != wantTotal || len(gotSpans) != len(wantSpans) {
+		t.Fatalf("fallback returned %d spans/%d total, want %d/%d", len(gotSpans), gotTotal, len(wantSpans), wantTotal)
+	}
+	for i := range wantSpans {
+		if gotSpans[i] != wantSpans[i] {
+			t.Errorf("fallback span[%d] = %#v, want %#v", i, gotSpans[i], wantSpans[i])
+		}
+	}
+}
+
+// TestExtractSnippetAtMatchesPerSpanExtraction guards the line-index reuse:
+// locating every span with one prebuilt index must match the one-off helper.
+func TestExtractSnippetAtMatchesPerSpanExtraction(t *testing.T) {
+	content := "primeira linha\ncoração na segunda\nterceira linha\n"
+	spans, _ := FoldedMatchSpansWithCount(content, Fold("linha"), 0)
+	if len(spans) != 2 {
+		t.Fatalf("fixture spans = %#v, want 2", spans)
+	}
+
+	lines := BuildLineIndex(content)
+	for i, span := range spans {
+		wantLine, wantColumn, wantSnippet := ExtractSnippet(content, span)
+		line, column, snippet := ExtractSnippetAt(content, span, lines)
+		if line != wantLine || column != wantColumn || snippet != wantSnippet {
+			t.Errorf("span[%d] = %d/%d %q, want %d/%d %q", i, line, column, snippet, wantLine, wantColumn, wantSnippet)
+		}
+	}
+}

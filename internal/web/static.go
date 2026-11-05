@@ -1,29 +1,108 @@
 package web
 
 import (
+	"bytes"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"mime"
 	"net/http"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
+	"sync"
 
 	"notediscovery/internal/config"
 )
 
+// staticAsset is one file served by ServeStatic. data/gzipData and their
+// ETags are computed once per process; after that a request only picks the
+// representation and writes it, with no read, compression or hashing.
+type staticAsset struct {
+	data        []byte
+	gzipData    []byte
+	contentType string
+	etag        string
+	gzipETag    string
+}
+
 type StaticHandler struct {
 	cfg      *config.Config
 	assetsFS fs.FS
+
+	index    *staticAsset
+	indexErr error
+
+	assets sync.Map // filePath -> *staticAsset
 }
 
 func NewStaticHandler(cfg *config.Config, assetsFS fs.FS) *StaticHandler {
-	return &StaticHandler{
+	h := &StaticHandler{
 		cfg:      cfg,
 		assetsFS: assetsFS,
 	}
+	// The shell is rendered from config that never changes after startup, so
+	// do the replacements, locale inlining, gzip and hashing once instead of on
+	// every SPA navigation.
+	h.index, h.indexErr = buildIndex(assetsFS, cfg)
+	return h
+}
+
+// makeAsset snapshots data for serving, pre-compressing and hashing the two
+// representations once.
+func makeAsset(data []byte, contentType string) *staticAsset {
+	asset := &staticAsset{
+		data:        data,
+		contentType: contentType,
+		etag:        shortETag(data, ""),
+	}
+	if contentType == "" || !isCompressibleContentType(contentType) {
+		return asset
+	}
+
+	var buf bytes.Buffer
+	gz, err := gzip.NewWriterLevel(&buf, gzip.DefaultCompression)
+	if err != nil {
+		return asset
+	}
+	if _, err := gz.Write(data); err != nil {
+		return asset
+	}
+	if err := gz.Close(); err != nil {
+		return asset
+	}
+	asset.gzipData = buf.Bytes()
+	asset.gzipETag = shortETag(asset.gzipData, "-gzip")
+	return asset
+}
+
+func shortETag(data []byte, suffix string) string {
+	sum := sha256.Sum256(data)
+	return fmt.Sprintf(`"%s%s"`, hex.EncodeToString(sum[:])[:16], suffix)
+}
+
+func buildIndex(assetsFS fs.FS, cfg *config.Config) (*staticAsset, error) {
+	data, err := fs.ReadFile(assetsFS, "frontend/index.html")
+	if err != nil {
+		return nil, err
+	}
+
+	content := string(data)
+	content = RenderAppNameHTML(content, cfg.App.Name)
+	content = strings.ReplaceAll(content, "__APP_VERSION__", url.QueryEscape(cfg.App.Version))
+	content = strings.ReplaceAll(content, "__DEFAULT_THEME__", cfg.UI.DefaultTheme)
+
+	// Inline the shipped locale's translations (see __PRELOADED_TRANSLATIONS__
+	// in index.html) so the document arrives with its translations already
+	// embedded instead of the page issuing a synchronous XHR before Alpine
+	// initializes.
+	content = renderPreloadedTranslations(assetsFS, content)
+
+	return makeAsset([]byte(content), "text/html; charset=utf-8"), nil
 }
 
 func RenderAppNameHTML(content string, appName string) string {
@@ -32,37 +111,11 @@ func RenderAppNameHTML(content string, appName string) string {
 }
 
 func (h *StaticHandler) ServeIndex(w http.ResponseWriter, r *http.Request) {
-	data, err := fs.ReadFile(h.assetsFS, "frontend/index.html")
-	if err != nil {
+	if h.indexErr != nil {
 		http.Error(w, "index.html not found", http.StatusInternalServerError)
 		return
 	}
-
-	content := string(data)
-	content = RenderAppNameHTML(content, h.cfg.App.Name)
-	content = strings.ReplaceAll(content, "__APP_VERSION__", url.QueryEscape(h.cfg.App.Version))
-	content = strings.ReplaceAll(content, "__DEFAULT_THEME__", h.cfg.UI.DefaultTheme)
-
-	// Inline the shipped locale's translations (see __PRELOADED_TRANSLATIONS__
-	// in index.html) so the document arrives with its translations already
-	// embedded instead of the page issuing a synchronous XHR before Alpine
-	// initializes. Done before the ETag so the hash covers the final bytes.
-	content = renderPreloadedTranslations(h.assetsFS, content)
-
-	hasher := sha256.New()
-	hasher.Write([]byte(content))
-	etag := fmt.Sprintf(`"%s"`, hex.EncodeToString(hasher.Sum(nil))[:16])
-
-	if match := r.Header.Get("If-None-Match"); match == etag {
-		w.WriteHeader(http.StatusNotModified)
-		return
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("ETag", etag)
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(content))
+	serveAsset(w, r, h.index, "no-cache")
 }
 
 // renderPreloadedTranslations replaces the __PRELOADED_TRANSLATIONS__ placeholder
@@ -129,7 +182,7 @@ func (h *StaticHandler) ServeStatic(w http.ResponseWriter, r *http.Request) {
 	relPath := strings.TrimPrefix(r.URL.Path, "/static/")
 	filePath := path.Join("frontend", relPath)
 
-	data, err := fs.ReadFile(h.assetsFS, filePath)
+	asset, err := h.loadAsset(filePath)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -138,38 +191,87 @@ func (h *StaticHandler) ServeStatic(w http.ResponseWriter, r *http.Request) {
 	// Caching strategy: immutable if has ?v= or is mermaid vendor chunk
 	isVersioned := r.URL.Query().Get("v") != "" || strings.Contains(relPath, "vendor/mermaid/chunks/")
 	if isVersioned {
-		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-	} else {
-		w.Header().Set("Cache-Control", "no-cache")
+		serveAsset(w, r, asset, "public, max-age=31536000, immutable")
+		return
+	}
+	serveAsset(w, r, asset, "no-cache")
+}
+
+// loadAsset reads and prepares a static file the first time it is requested.
+// Vendor chunks are numerous and large, so precompressing every one at startup
+// would delay boot; the sync.Map makes the cost a one-off per file.
+func (h *StaticHandler) loadAsset(filePath string) (*staticAsset, error) {
+	if cached, ok := h.assets.Load(filePath); ok {
+		return cached.(*staticAsset), nil
 	}
 
-	// Content-Type by extension
-	ext := path.Ext(filePath)
+	data, err := fs.ReadFile(h.assetsFS, filePath)
+	if err != nil {
+		return nil, err
+	}
+	asset := makeAsset(data, staticContentType(path.Ext(filePath)))
+	actual, _ := h.assets.LoadOrStore(filePath, asset)
+	return actual.(*staticAsset), nil
+}
+
+func staticContentType(ext string) string {
 	switch ext {
 	case ".js", ".mjs":
-		w.Header().Set("Content-Type", "application/javascript")
+		return "application/javascript"
 	case ".map":
-		w.Header().Set("Content-Type", "application/json")
+		return "application/json"
 	case ".css":
-		w.Header().Set("Content-Type", "text/css; charset=utf-8")
+		return "text/css; charset=utf-8"
 	case ".png":
-		w.Header().Set("Content-Type", "image/png")
+		return "image/png"
 	case ".jpg", ".jpeg":
-		w.Header().Set("Content-Type", "image/jpeg")
+		return "image/jpeg"
 	case ".svg":
-		w.Header().Set("Content-Type", "image/svg+xml")
+		return "image/svg+xml"
 	case ".json":
-		w.Header().Set("Content-Type", "application/json")
+		return "application/json"
 	case ".woff2":
-		w.Header().Set("Content-Type", "font/woff2")
+		return "font/woff2"
 	case ".woff":
-		w.Header().Set("Content-Type", "font/woff")
+		return "font/woff"
 	case ".ttf":
-		w.Header().Set("Content-Type", "font/ttf")
+		return "font/ttf"
+	}
+	// Preserve the Content-Type net/http used to sniff for the remaining
+	// asset types (.html, .md, .ico, ...). Sniffing no longer happens because
+	// serveAsset writes the header explicitly.
+	return mime.TypeByExtension(ext)
+}
+
+// serveAsset writes asset with the most specific encoding the client accepts.
+// The ETag identifies the representation, so a validated gzip response is not
+// confused with the identity one.
+func serveAsset(w http.ResponseWriter, r *http.Request, asset *staticAsset, cacheControl string) {
+	body := asset.data
+	etag := asset.etag
+	// Representation selection depends only on Accept-Encoding. HEAD must
+	// advertise the same ETag/Content-Encoding a GET would use; net/http
+	// suppresses the body on its own.
+	if asset.gzipData != nil && acceptsGzipEncoding(r.Header.Get("Accept-Encoding")) {
+		body = asset.gzipData
+		etag = asset.gzipETag
+		w.Header().Set("Content-Encoding", "gzip")
 	}
 
+	if asset.contentType != "" {
+		w.Header().Set("Content-Type", asset.contentType)
+	}
+	w.Header().Set("Cache-Control", cacheControl)
+	w.Header().Set("ETag", etag)
+
+	if match := r.Header.Get("If-None-Match"); match == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+
+	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(data)
+	_, _ = w.Write(body)
 }
 
 func (h *StaticHandler) CatchAll(w http.ResponseWriter, r *http.Request) {

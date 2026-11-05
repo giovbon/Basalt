@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"notediscovery/internal/search"
 )
@@ -374,5 +375,117 @@ func TestDeleteFolderRootRefused(t *testing.T) {
 	}
 	if _, err := v.GetNoteContent("keep.md"); err != nil {
 		t.Errorf("note at vault root was deleted: %v", err)
+	}
+}
+
+// TestTagCountsAreCachedAndCopied pins the sidebar fast path: counts are built
+// once per snapshot and handed out as a copy, so a caller cannot corrupt the
+// cache by mutating the map it received.
+func TestTagCountsAreCachedAndCopied(t *testing.T) {
+	dir := t.TempDir()
+	v := New(dir)
+	for path, content := range map[string]string{
+		"a.md": "---\ntags: [alpha, beta]\n---\nbody\n",
+		"b.md": "---\ntags: [beta]\n---\nbody\n",
+	} {
+		if err := v.SaveNote(path, content); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	counts, err := v.TagCounts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts["alpha"] != 1 || counts["beta"] != 2 {
+		t.Fatalf("counts = %#v, want alpha:1 beta:2", counts)
+	}
+
+	counts["alpha"] = 99
+	delete(counts, "beta")
+
+	again, err := v.TagCounts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again["alpha"] != 1 || again["beta"] != 2 {
+		t.Errorf("counts after caller mutation = %#v, want cached alpha:1 beta:2", again)
+	}
+}
+
+// TestScanNotesSnapshotSurvivesLaterWrites verifies the copy-on-write scan
+// cache: a listing already handed to a caller must not change when a later save
+// publishes a new snapshot.
+func TestScanNotesSnapshotSurvivesLaterWrites(t *testing.T) {
+	oldTTL := scanCacheTTL
+	scanCacheTTL = time.Hour
+	defer func() { scanCacheTTL = oldTTL }()
+
+	dir := t.TempDir()
+	v := New(dir)
+	if err := v.SaveNote("first.md", "first\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	before, foldersBefore, err := v.ScanNotes(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before) != 1 || before[0].Path != "first.md" {
+		t.Fatalf("before = %#v, want first.md", notePaths(before))
+	}
+	if len(foldersBefore) != 0 {
+		t.Fatalf("folders before = %v, want none", foldersBefore)
+	}
+
+	if err := v.SaveNote("second.md", "second\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(before) != 1 || before[0].Path != "first.md" {
+		t.Errorf("previously returned snapshot changed after a save: %#v", notePaths(before))
+	}
+	after, _, err := v.ScanNotes(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if set := notePaths(after); !hasPath(set, "first.md") || !hasPath(set, "second.md") {
+		t.Errorf("new snapshot = %v, want both notes", set)
+	}
+}
+
+// TestGetBacklinksOrdersNotesByMTime checks the reverse index preserves the
+// previous newest-first note ordering.
+func TestGetBacklinksOrdersNotesByMTime(t *testing.T) {
+	oldTTL := scanCacheTTL
+	scanCacheTTL = 0
+	defer func() { scanCacheTTL = oldTTL }()
+
+	dir := t.TempDir()
+	v := New(dir)
+	if err := v.SaveNote("target.md", "# T\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.SaveNote("older.md", "[[target]]\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.SaveNote("newer.md", "[[target]]\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now()
+	if err := os.Chtimes(filepath.Join(dir, "older.md"), now.Add(-2*time.Hour), now.Add(-2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(filepath.Join(dir, "newer.md"), now.Add(-time.Hour), now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	backlinks := v.GetBacklinks("target.md")
+	if len(backlinks) != 2 {
+		t.Fatalf("backlinks = %#v, want two", backlinks)
+	}
+	if backlinks[0].Path != "newer.md" || backlinks[1].Path != "older.md" {
+		t.Errorf("backlink order = %q, %q; want newer.md, older.md", backlinks[0].Path, backlinks[1].Path)
 	}
 }

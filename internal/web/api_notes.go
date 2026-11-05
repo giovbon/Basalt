@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -38,7 +39,9 @@ func (h *NotesHandler) ListNotes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Always sort notes by path.lower()
+	// Always sort notes by path.lower(). ScanNotes returns a read-only view of
+	// the cached snapshot, so clone before sorting in place.
+	notes = slices.Clone(notes)
 	sort.Slice(notes, func(i, j int) bool {
 		return strings.ToLower(notes[i].Path) < strings.ToLower(notes[j].Path)
 	})

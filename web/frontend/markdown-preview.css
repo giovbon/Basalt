@@ -398,9 +398,11 @@
     max-width: none;
 }
 .markdown-preview .mermaid-rendered svg {
+    display: block;
     width: 100% !important;
     max-width: 100% !important;
     height: auto;
+    margin: 0 auto;
 }
 
 /* Enhanced Shell/Bash Syntax Highlighting */

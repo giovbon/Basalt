@@ -17,22 +17,22 @@ type ThemeInfo struct {
 }
 
 var themeIcons = map[string]string{
-	"light":              "🌞",
-	"dark":               "🌙",
-	"dracula":            "🧛",
-	"nord":               "❄️",
-	"monokai":            "🎞️",
-	"vue-high-contrast":  "💚",
-	"cobalt2":            "🌊",
-	"vs-blue":            "🔷",
-	"gruvbox-dark":       "🟫",
-	"matcha-light":       "🍵",
-	"hacker":             "🖥️",
-	"ubuntu":             "🟠",
-	"catppuccin-latte":   "🧋",
-	"tokyo-night":        "⛩️",
-	"one-dark-pro":       "⚫",
-	"synthwave-84":       "🕹️",
+	"light":             "🌞",
+	"dark":              "🌙",
+	"dracula":           "🧛",
+	"nord":              "❄️",
+	"monokai":           "🎞️",
+	"vue-high-contrast": "💚",
+	"cobalt2":           "🌊",
+	"vs-blue":           "🔷",
+	"gruvbox-dark":      "🟫",
+	"matcha-light":      "🍵",
+	"hacker":            "🖥️",
+	"ubuntu":            "🟠",
+	"catppuccin-latte":  "🧋",
+	"tokyo-night":       "⛩️",
+	"one-dark-pro":      "⚫",
+	"synthwave-84":      "🕹️",
 }
 
 // titleCase converts "matcha light" to "Matcha Light"

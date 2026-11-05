@@ -30,10 +30,6 @@ func isCompressibleContentType(ct string) bool {
 	return false
 }
 
-// gzipHandler compresses text responses when the client advertises gzip
-// support. Wrapping the outermost handler covers the SPA shell, static
-// assets (app.js, index.html, CSS, vendor libs) and JSON API responses
-// alike. Level is the stdlib default (6): a good speed/size trade-off.
 // addVary appends token to the response's Vary header, skipping duplicates.
 // Multiple values are merged into a single comma-separated header so callers
 // that use Header().Get("Vary") still observe the complete list.
@@ -53,13 +49,28 @@ func addVary(w http.ResponseWriter, token string) {
 	w.Header().Set("Vary", strings.Join(append(existing, token), ", "))
 }
 
+// acceptsGzipEncoding reports whether an Accept-Encoding header advertises gzip.
+func acceptsGzipEncoding(header string) bool {
+	return strings.Contains(strings.ToLower(header), "gzip")
+}
+
+// clientAcceptsGzip reports whether the request advertises gzip support. HEAD
+// responses carry no body, so the transport never compresses them.
+func clientAcceptsGzip(r *http.Request) bool {
+	return r.Method != http.MethodHead && acceptsGzipEncoding(r.Header.Get("Accept-Encoding"))
+}
+
+// gzipHandler compresses text responses when the client advertises gzip
+// support. Wrapping the outermost handler covers the SPA shell, static
+// assets (app.js, index.html, CSS, vendor libs) and JSON API responses
+// alike. Level is the stdlib default (6): a good speed/size trade-off.
+// Responses that already set Content-Encoding (the pre-gzipped static assets
+// from static.go) pass through untouched.
 func gzipHandler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		addVary(w, "Accept-Encoding")
 
-		acceptsGzip := r.Method != http.MethodHead &&
-			strings.Contains(strings.ToLower(r.Header.Get("Accept-Encoding")), "gzip")
-		if !acceptsGzip {
+		if !clientAcceptsGzip(r) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -84,8 +95,12 @@ func (w *gzipResponseWriter) WriteHeader(status int) {
 	w.wroteHdr = true
 
 	// Only a successful full response carries a body worth compressing.
-	// 204/304/redirect responses must not declare Content-Encoding.
-	if status == http.StatusOK && isCompressibleContentType(w.Header().Get("Content-Type")) {
+	// 204/304/redirect responses must not declare Content-Encoding. A handler
+	// that already encoded the body (static.go serves pre-gzipped assets) has
+	// set Content-Encoding, so leave it alone instead of compressing twice.
+	if status == http.StatusOK &&
+		w.Header().Get("Content-Encoding") == "" &&
+		isCompressibleContentType(w.Header().Get("Content-Type")) {
 		// The body will differ from the advertised uncompressed size.
 		w.Header().Del("Content-Length")
 		w.Header().Set("Content-Encoding", "gzip")
