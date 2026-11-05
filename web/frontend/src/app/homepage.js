@@ -77,7 +77,7 @@ export function createHomepage() {
                 return this._homepageCache.breadcrumb;
             }
             
-            const breadcrumb = [{ name: this.t('homepage.title'), path: '' }];
+            const breadcrumb = [];
             
             if (this.selectedHomepageFolder) {
                 const parts = this.selectedHomepageFolder.split('/').filter(Boolean);
