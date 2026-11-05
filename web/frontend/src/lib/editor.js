@@ -59,6 +59,85 @@ export function editorMapCaretAfterOutdent(chunk, newChunk, rel) {
     return r - editorRemovedBeforeInChunk(chunk, r);
 }
 
+/** Map a caret offset inside `chunk` to its position after every line gains a tab. */
+export function editorMapCaretAfterIndent(chunk, newChunk, rel) {
+    const r = Math.max(0, rel);
+    if (r >= chunk.length) return newChunk.length;
+    let newlinesBefore = 0;
+    for (let i = 0; i < r; i++) {
+        if (chunk.charCodeAt(i) === 10 /* \n */) newlinesBefore++;
+    }
+    return r + newlinesBefore + 1;
+}
+
+/**
+ * Tab with a multi-line selection: prefix every selected line with a tab and
+ * keep the selection in place. A plain Tab (collapsed caret or a selection
+ * inside one line) still inserts a single tab at the caret, which the caller
+ * handles so the character lands exactly where the user is typing.
+ *
+ * @returns {{ changed: boolean, text: string, selStart: number, selEnd: number }}
+ */
+export function applyEditorIndent(text, selStart, selEnd) {
+    const a = Math.min(selStart, selEnd);
+    const b = Math.max(selStart, selEnd);
+    if (a === b || !text.slice(a, b).includes('\n')) {
+        return { changed: false, text, selStart, selEnd };
+    }
+
+    const blockStart = text.lastIndexOf('\n', Math.max(0, a - 1)) + 1;
+    const ref = b > a ? b - 1 : a;
+    let blockEnd = text.indexOf('\n', ref);
+    if (blockEnd === -1) blockEnd = text.length;
+
+    const chunk = text.slice(blockStart, blockEnd);
+    if (chunk.length === 0) return { changed: false, text, selStart, selEnd };
+
+    const newChunk = chunk.split('\n').map((line) => '\t' + line).join('\n');
+    const newText = text.slice(0, blockStart) + newChunk + text.slice(blockEnd);
+    const newA = blockStart + editorMapCaretAfterIndent(chunk, newChunk, a - blockStart);
+    const newB = blockStart + editorMapCaretAfterIndent(chunk, newChunk, b - blockStart);
+
+    return {
+        changed: true,
+        text: newText,
+        selStart: Math.min(newA, newB),
+        selEnd: Math.max(newA, newB),
+    };
+}
+
+/**
+ * Wrap a selection (or insert a placeholder at the caret) with markdown
+ * delimiters, keeping edge whitespace outside inline wrappers so the result
+ * stays valid CommonMark ("** house **" is invalid).
+ *
+ * @returns {{ text: string, selStart: number, selEnd: number }}
+ */
+export function applyMarkdownWrap(text, selStart, selEnd, before, after, placeholder = '') {
+    const start = Math.min(selStart, selEnd);
+    const end = Math.max(selStart, selEnd);
+    const selectedText = text.substring(start, end);
+
+    const isInline = !before.includes('\n') && !after.includes('\n');
+    let leading = '';
+    let trailing = '';
+    let core = selectedText;
+    if (isInline && selectedText) {
+        const m = selectedText.match(/^(\s*)([\s\S]*?)(\s*)$/);
+        leading = m[1];
+        core = m[2];
+        trailing = m[3];
+    }
+    const textToWrap = core || placeholder;
+
+    const newText = leading + before + textToWrap + after + trailing;
+    const newContent = text.substring(0, start) + newText + text.substring(end);
+    const coreStart = start + leading.length + before.length;
+    const coreEnd = coreStart + textToWrap.length;
+
+    return { text: newContent, selStart: coreStart, selEnd: coreEnd };
+}
+
 /**
  * Shift+Tab outdent while "tab inserts tab" is enabled: remove one leading \t
  * or up to 4 spaces per affected line.

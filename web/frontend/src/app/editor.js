@@ -3,21 +3,39 @@
 // Split out of the former monolith src/main.js; noteApp() in main.js composes
 // this factory's object with the other feature slices (see compose()).
 
-import { applyEditorOutdent } from '../lib/editor.js';
+import { applyEditorIndent, applyEditorOutdent, applyMarkdownWrap } from '../lib/editor.js';
+
+// Delimiters that wrap an active selection when typed directly in the editor.
+// Typing "*" then "*" therefore nests into "**bold**" while the selection stays
+// on the text; brackets and quotes behave like a typical auto-pairing editor.
+const AUTO_WRAP_PAIRS = {
+    '*': ['*', '*'],
+    '_': ['_', '_'],
+    '~': ['~~', '~~'],
+    '`': ['`', '`'],
+    '(': ['(', ')'],
+    '[': ['[', ']'],
+    '{': ['{', '}'],
+    '"': ['"', '"'],
+    "'": ["'", "'"],
+    '<': ['<', '>'],
+};
 
 export function createEditor() {
     return {
 
-        // Handle Tab key in editor (inserts tab; Shift+Tab outdents matching lines)
+        // Handle Tab key in editor (indents; Shift+Tab outdents matching lines)
         handleTabKey(event) {
             const textarea = event.target;
             const start = textarea.selectionStart;
             const end = textarea.selectionEnd;
 
             if (event.shiftKey) {
+                // Always keep focus in the editor; without this a line that is
+                // already flush-left lets the browser move focus to the toolbar.
+                event.preventDefault();
                 const result = applyEditorOutdent(this.noteContent, start, end);
                 if (!result.changed) return;
-                event.preventDefault();
                 this.noteContent = result.text;
                 this.$nextTick(() => {
                     textarea.selectionStart = result.selStart;
@@ -28,11 +46,49 @@ export function createEditor() {
             }
 
             event.preventDefault();
+
+            // A multi-line selection gets one tab per line instead of being
+            // replaced by a single tab character.
+            const multiline = applyEditorIndent(this.noteContent, start, end);
+            if (multiline.changed) {
+                this.noteContent = multiline.text;
+                this.$nextTick(() => {
+                    textarea.selectionStart = multiline.selStart;
+                    textarea.selectionEnd = multiline.selEnd;
+                });
+                this.autoSave();
+                return;
+            }
+
             this.noteContent = this.noteContent.substring(0, start) + '\t' + this.noteContent.substring(end);
             this.$nextTick(() => {
                 textarea.selectionStart = textarea.selectionEnd = start + 1;
             });
             this.autoSave();
+        },
+
+        // Single keydown entry point: wikilink autocomplete gets first refusal,
+        // then typing a delimiter over a selection wraps that selection.
+        handleEditorKeydown(event) {
+            this.wlOnKeydown(event);
+            if (event.defaultPrevented) return;
+            this.wrapSelectionOnType(event);
+        },
+
+        wrapSelectionOnType(event) {
+            if (event.defaultPrevented || event.isComposing) return;
+            if (event.ctrlKey || event.metaKey || event.altKey) return;
+            if (typeof event.key !== 'string' || event.key.length !== 1) return;
+
+            const pair = AUTO_WRAP_PAIRS[event.key];
+            if (!pair) return;
+
+            const editor = event.target;
+            if (!editor || editor.id !== 'note-editor') return;
+            if (editor.selectionStart === editor.selectionEnd) return;
+
+            event.preventDefault();
+            this.wrapSelection(pair[0], pair[1], '');
         },
 
         /**
