@@ -5,6 +5,7 @@
 
 import { CONFIG, LOCAL_SETTINGS } from '../core/config.js';
 import { readLocalSettings, saveSetting } from '../core/settings.js';
+import { encodeVaultPath } from '../core/utils.js';
 
 export function createUi() {
     return {
@@ -424,7 +425,7 @@ export function createUi() {
             
             // Build the full URL
             const pathWithoutExtension = this.currentNote.replace('.md', '');
-            const encodedPath = pathWithoutExtension.split('/').map(segment => encodeURIComponent(segment)).join('/');
+            const encodedPath = encodeVaultPath(pathWithoutExtension);
             const url = `${window.location.origin}/${encodedPath}`;
             
             try {

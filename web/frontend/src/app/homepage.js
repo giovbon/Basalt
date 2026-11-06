@@ -170,13 +170,7 @@ export function createHomepage() {
             this.homepageNameQuery = '';
             
             // Clear editor state to show landing page
-            this.currentNote = '';
-            this.currentNoteName = '';
-            this.noteContent = '';
-            this.closeMediaViewer();
-            this.outline = [];
-            this.backlinks = [];
-            document.title = this.appName;
+            this._resetNoteState();
             
             // Invalidate cache to force recalculation
             this._homepageCache = {
@@ -194,19 +188,8 @@ export function createHomepage() {
             this.showGraph = false; // Close graph when going home
             this.selectedHomepageFolder = '';
             this.homepageNameQuery = '';
-            this.currentNote = '';
-            this.currentNoteName = '';
-            this.noteContent = '';
-            this.closeMediaViewer();
-            this.outline = [];
-            this.backlinks = [];
+            this._resetNoteState();
             this.mobileSidebarOpen = false;
-            document.title = this.appName;
-            
-            // Clear undo/redo history
-            this.undoHistory = [];
-            this.redoHistory = [];
-            this.hasPendingHistoryChanges = false;
             
             // Invalidate cache to force recalculation
             this._homepageCache = {

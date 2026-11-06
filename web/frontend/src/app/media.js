@@ -116,7 +116,7 @@ export function createMedia() {
             } else {
                 // For notes, insert note link
                 const noteName = notePath.split('/').pop().replace('.md', '');
-                const encodedPath = notePath.split('/').map(segment => encodeURIComponent(segment)).join('/');
+                const encodedPath = encodeVaultPath(notePath);
                 link = `[${noteName}](${encodedPath})`;
             }
             
@@ -390,7 +390,7 @@ export function createMedia() {
             }
             
             const noteName = targetPath.split('/').pop().replace(/\.md$/i, '');
-            const encodedPath = targetPath.split('/').map(seg => encodeURIComponent(seg)).join('/');
+            const encodedPath = encodeVaultPath(targetPath);
             const link = `[${noteName}](${encodedPath})`;
             
             // No note open (upload from the homepage): the note was created,
@@ -525,9 +525,7 @@ export function createMedia() {
             // Close mobile sidebar when a media file is selected, same as loadNote
             this.mobileSidebarOpen = false;
             this.showGraph = false; // Ensure graph is closed
-            this.currentNote = '';
-            this.currentNoteName = '';
-            this.noteContent = '';
+            this._resetNoteState();
             this.currentMedia = mediaPath; // Reuse currentMedia for all media
             this.currentMediaType = mediaType || this.getMediaType(mediaPath) || 'image';
             this.viewMode = 'preview'; // Use preview mode to show media
@@ -542,7 +540,7 @@ export function createMedia() {
             // Update browser URL
             if (updateHistory) {
                 // Encode each path segment to handle special characters
-                const encodedPath = mediaPath.split('/').map(segment => encodeURIComponent(segment)).join('/');
+                const encodedPath = encodeVaultPath(mediaPath);
                 window.history.pushState(
                     { mediaPath: mediaPath },
                     '',
@@ -569,7 +567,7 @@ export function createMedia() {
             if (this.currentMedia === mediaPath) this.currentMedia = '';
             
             try {
-                await api.send(`/api/notes/${encodeURIComponent(mediaPath)}`, 'DELETE');
+                await api.send(`/api/notes/${encodeVaultPath(mediaPath)}`, 'DELETE');
             } catch (error) {
                 ErrorHandler.handle('delete media', error);
                 await this.loadNotes({ silent: true });

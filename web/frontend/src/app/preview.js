@@ -4,6 +4,7 @@
 // this factory's object with the other feature slices (see compose()).
 
 import * as api from '../core/api.js';
+import { encodeVaultPath } from '../core/utils.js';
 import { scanTaskLines, toggleTaskAt, setAllTasks } from '../lib/tasks.js';
 import { typeIconSvg } from '../lib/file-icons.js';
 
@@ -1061,7 +1062,7 @@ export function createPreview() {
             try {
                 // Build API URL with current theme
                 const currentTheme = this.currentTheme || 'light';
-                const encodedPath = this.currentNote.split('/').map(s => encodeURIComponent(s)).join('/');
+                const encodedPath = encodeVaultPath(this.currentNote);
                 const url = `/api/export/${encodedPath}?theme=${encodeURIComponent(currentTheme)}`;
                 
                 // Fetch the exported HTML from backend
@@ -1110,7 +1111,7 @@ export function createPreview() {
             
             // Build API URL with current theme and download=false for inline display
             const currentTheme = this.currentTheme || 'light';
-            const encodedPath = this.currentNote.split('/').map(s => encodeURIComponent(s)).join('/');
+            const encodedPath = encodeVaultPath(this.currentNote);
             const url = `/api/export/${encodedPath}?theme=${encodeURIComponent(currentTheme)}&download=false`;
             
             // Open in new window/tab

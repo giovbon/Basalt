@@ -43,6 +43,30 @@ export function createNotes() {
         },
         
         
+        // Clear every piece of state derived from the open note. Used when the
+        // note disappears (404 from the API or a local delete) so the outline,
+        // backlinks and undo history do not keep showing the previous document.
+        _resetNoteState() {
+            this.currentNote = '';
+            this.noteContent = '';
+            this.noteBaseHash = null;
+            this.currentNoteName = '';
+            this.outline = [];
+            this.backlinks = [];
+            this.noteMetadata = null;
+            this.undoHistory = [];
+            this.redoHistory = [];
+            this.isUndoRedo = false;
+            this.hasPendingHistoryChanges = false;
+            this.lastSaved = false;
+            this._lastRenderedContent = '';
+            this._lastRenderedNote = '';
+            this._cachedRenderedHTML = '';
+            this._initializedVideoSources = new Set();
+            this.closeMediaViewer();
+            document.title = this.appName;
+        },
+
         // Load a specific note. targetLine/targetColumn are the 1-based position
         // of the occurrence to focus when the note was opened from a search
         // result (a line can hold more than one occurrence of the term).
@@ -62,11 +86,7 @@ export function createNotes() {
                     if (response.status === 404) {
                         // Note not found - silently redirect to home
                         window.history.replaceState({ homepageFolder: this.selectedHomepageFolder || '' }, '', '/');
-                        this.currentNote = '';
-                        this.noteContent = '';
-                        this.noteBaseHash = null;
-                        this.closeMediaViewer();
-                        document.title = this.appName;
+                        this._resetNoteState();
                         return;
                     }
                     throw new Error(`HTTP error! status: ${response.status}`);
@@ -108,7 +128,7 @@ export function createNotes() {
                     // Encode the path properly (spaces become %20, etc.)
                     const pathWithoutExtension = notePath.replace('.md', '');
                     // Encode each path segment to handle special characters
-                    const encodedPath = pathWithoutExtension.split('/').map(segment => encodeURIComponent(segment)).join('/');
+                    const encodedPath = encodeVaultPath(pathWithoutExtension);
                     const params = new URLSearchParams();
                     if (searchQuery) {
                         params.set('search', searchQuery);
@@ -475,13 +495,11 @@ export function createNotes() {
                 this.saveFavorites();
             }
             if (this.currentNote && this.currentNote.startsWith(folderPrefix)) {
-                this.currentNote = '';
-                this.noteContent = '';
-                document.title = this.appName;
+                this._resetNoteState();
             }
             
             try {
-                await api.send(`/api/folders/${encodeURIComponent(folderPath)}`, 'DELETE');
+                await api.send(`/api/folders/${encodeVaultPath(folderPath)}`, 'DELETE');
                 this.loadTagsDebounced();
             } catch (error) {
                 ErrorHandler.handle('delete folder', error);
@@ -724,13 +742,7 @@ export function createNotes() {
             }
             
             if (this.currentNote === notePath) {
-                this.currentNote = '';
-                this.noteContent = '';
-                this.currentNoteName = '';
-                this._lastRenderedContent = '';
-                this._lastRenderedNote = '';
-                this._cachedRenderedHTML = '';
-                document.title = this.appName;
+                this._resetNoteState();
                 window.history.replaceState({}, '', '/');
             }
             

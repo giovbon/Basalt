@@ -37,8 +37,11 @@ export function createBootstrap() {
             await this.loadAvailableLocales();
             // Note: Translations are inlined into index.html before Alpine init (see index.html)
             // loadLocale() is only called when user changes language from settings
-            await this.loadNotes();
+            // Hydrate persisted settings before the first tree render, so
+            // sortMode, hideUnderscoreFolders and viewMode do not flash the
+            // defaults and then switch once the API data arrives.
             this.loadLocalSettings();
+            await this.loadNotes();
             
             // Parse URL and load specific note if provided
             this.loadItemFromURL();
@@ -73,12 +76,7 @@ export function createBootstrap() {
                     this.viewMedia(e.state.mediaPath, null, false);
                 } else {
                     // Navigating back to homepage
-                    this.currentNote = '';
-                    this.noteContent = '';
-                    this.currentNoteName = '';
-                    this.outline = [];
-                    this.backlinks = [];
-                    document.title = this.appName;
+                    this._resetNoteState();
                     
                     // Restore homepage folder state if it was saved
                     if (e.state && e.state.homepageFolder !== undefined) {
@@ -429,6 +427,17 @@ export function createBootstrap() {
         toggleTabInsertsTab() {
             this.tabInsertsTab = !this.tabInsertsTab;
             saveSetting('tabInsertsTab', this.tabInsertsTab, LOCAL_SETTINGS);
+        },
+
+        // Behavior of the "+" (new note) button: chooser, note or folder.
+        persistNewButtonAction() {
+            saveSetting('newButtonAction', this.newButtonAction, LOCAL_SETTINGS);
+        },
+
+        // Pre-fill a new note's title with a timestamp.
+        toggleAutoFillNoteTitle() {
+            this.autoFillNoteTitle = !this.autoFillNoteTitle;
+            saveSetting('autoFillNoteTitle', this.autoFillNoteTitle, LOCAL_SETTINGS);
         },
 
         // Hide / show only the sidebar PANEL (files, search, outline, etc.); the icon rail
