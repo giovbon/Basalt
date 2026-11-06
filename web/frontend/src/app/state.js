@@ -45,8 +45,7 @@ export function createState() {
         isSaving: false,
         lastSaved: false,
         noteBaseHash: null,        // Fingerprint of the current note as last read or written on disk
-        _saveQueued: false,        // A save was requested while another was in flight
-        _saveConflictOpen: false,  // The "changed elsewhere" prompt is showing; saves wait
+        _saveControllerInstance: null, // lib/save-controller.js, created on first save
         linkCopied: false,
         zenMode: false,
         // Hides only the .sidebar-panel content (files / search / tags / outline / etc.) while

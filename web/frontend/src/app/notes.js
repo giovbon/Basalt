@@ -7,6 +7,7 @@ import { CONFIG, LOCAL_SETTINGS } from '../core/config.js';
 import { ErrorHandler, encodeVaultPath, FilenameValidator } from '../core/utils.js';
 import * as api from '../core/api.js';
 import { buildFolderTree, noteComparator, folderComparator } from '../lib/folder-tree.js';
+import { createSaveController } from '../lib/save-controller.js';
 
 export function createNotes() {
     return {
@@ -513,120 +514,105 @@ export function createNotes() {
             }, this.autosaveDelayMs);
         },
         
-        // Save current note
+        // Save current note. Queueing and the 409 "changed elsewhere" flow live
+        // in lib/save-controller.js so they can be tested without Alpine.
         async saveNote() {
             if (!this.currentNote) return;
-            // The "changed elsewhere" prompt is open: nothing is written until the user chooses.
-            if (this._saveConflictOpen) return;
-            // One save at a time. A second request sent before the first returns would
-            // carry a stale base_hash and trip the conflict check against our own write.
-            if (this.isSaving) {
-                this._saveQueued = true;
-                return;
-            }
+            await this._getSaveController().request();
+        },
 
-            this.isSaving = true;
-            const notePath = this.currentNote;
-
-            try {
-                // 409 is handled in-place (ask the user), so do not let api throw.
-                const response = await api.raw(`/api/notes/${encodeVaultPath(notePath)}`, {
-                    method: 'POST',
-                    // base_hash lets the server refuse (409) a write over a file that
-                    // changed on disk since we read it.
-                    json: { content: this.noteContent, base_hash: this.noteBaseHash }
-                });
-
-                if (response.status === 409) {
-                    const detail = await response.json();
-                    if (notePath !== this.currentNote) {
-                        // The user already moved to another note: its base hash is not ours to touch.
+        _getSaveController() {
+            if (!this._saveControllerInstance) {
+                this._saveControllerInstance = createSaveController({
+                    // capture() runs at send time, so a queued save always
+                    // writes the latest buffer instead of a stale snapshot.
+                    capture: () => {
+                        if (!this.currentNote) return null;
+                        return {
+                            notePath: this.currentNote,
+                            content: this.noteContent,
+                            baseHash: this.noteBaseHash,
+                        };
+                    },
+                    isCurrent: (notePath) => notePath === this.currentNote,
+                    send: (payload) => this._sendNoteSave(payload),
+                    askConflict: (notePath) => this._askSaveConflict(notePath),
+                    reload: (notePath) => this._reloadAfterSaveConflict(notePath),
+                    onSaved: (payload, result) => this._handleSaveSuccess(payload, result),
+                    onUnsaved: (notePath) => {
                         const name = notePath.split('/').pop().replace('.md', '');
                         this.toast(this.t('notes.save_conflict_unsaved', { name }), { type: 'warning' });
-                        return;
-                    }
-                    // Nothing is in flight while the user decides.
-                    this.isSaving = false;
-                    if (await this._askSaveConflict(notePath)) {
-                        // Overwrite: take the disk version as the base, re-send ours.
-                        this.noteBaseHash = detail.hash || null;
-                        this._saveQueued = true;
-                    } else {
-                        // Reload: drop the pending autosave and show the version on disk.
-                        if (this.saveTimeout) {
-                            clearTimeout(this.saveTimeout);
-                            this.saveTimeout = null;
-                        }
-                        this._saveQueued = false;
-                        await this.loadNote(notePath, false);
-                    }
-                    return;
-                }
-
-                if (response.ok) {
-                    const result = await response.json();
-                    // A hover preview for this note would otherwise show the
-                    // version from before this save for up to its cache TTL.
-                    if (this._linkPreviewCache) this._linkPreviewCache.delete(notePath);
-                    if (notePath === this.currentNote) {
-                        this.noteBaseHash = result.hash || null;
-                        // Refresh TOC and metadata panels from the server-parsed save response
-                        this.outline = result.outline || [];
-                        this.noteMetadata = result.frontmatter || null;
-                    }
-                    this.lastSaved = true;
-                    
-                    // Update only the modified timestamp for the current note (no full reload needed)
-                    const note = this.notes.find(n => n.path === this.currentNote);
-                    if (note) {
-                        note.modified = new Date().toISOString();
-                        note.size = new Blob([this.noteContent]).size;
-                        
-                        note.tags = result.tags || [];
-                    }
-                    
-                    // Reload tags to update sidebar counts (debounced to prevent spam)
-                    this.loadTagsDebounced();
-                    
-                    // Rebuild folder tree if tag filters are active
-                    if (this.selectedTags.length > 0) {
-                        this.buildFolderTree();
-                    }
-                    
-                    // Hide "saved" indicator
-                    setTimeout(() => {
-                        this.lastSaved = false;
-                    }, CONFIG.SAVE_INDICATOR_DURATION);
-                } else {
-                    ErrorHandler.handle('save note', new Error('Server returned error'));
-                }
-            } catch (error) {
-                ErrorHandler.handle('save note', error);
-            } finally {
-                this.isSaving = false;
-                if (this._saveQueued) {
-                    this._saveQueued = false;
-                    this.saveNote();
-                }
+                    },
+                    onError: (error) => ErrorHandler.handle('save note', error),
+                    onBusyChange: (busy) => { this.isSaving = busy; },
+                });
             }
+            return this._saveControllerInstance;
+        },
+
+        async _sendNoteSave({ notePath, content, baseHash }) {
+            // 409 is part of the protocol, so it is parsed rather than thrown.
+            const response = await api.raw(`/api/notes/${encodeVaultPath(notePath)}`, {
+                method: 'POST',
+                json: { content, base_hash: baseHash }
+            });
+            const body = (response.ok || response.status === 409) ? await response.json() : {};
+            return { ok: response.ok, status: response.status, ...body };
+        },
+
+        async _reloadAfterSaveConflict(notePath) {
+            // Drop the pending autosave: reloading replaces the editor buffer.
+            if (this.saveTimeout) {
+                clearTimeout(this.saveTimeout);
+                this.saveTimeout = null;
+            }
+            await this.loadNote(notePath, false);
+        },
+
+        _handleSaveSuccess({ notePath, content }, result) {
+            // A hover preview for this note would otherwise show the version
+            // from before this save for up to its cache TTL.
+            if (this._linkPreviewCache) this._linkPreviewCache.delete(notePath);
+
+            if (notePath === this.currentNote) {
+                this.noteBaseHash = result.hash || null;
+                // Refresh TOC and metadata panels from the server-parsed response.
+                this.outline = result.outline || [];
+                this.noteMetadata = result.frontmatter || null;
+            }
+            this.lastSaved = true;
+
+            // Update only the modified timestamp for the saved note (no full reload).
+            const note = this.notes.find(n => n.path === notePath);
+            if (note) {
+                note.modified = new Date().toISOString();
+                note.size = new Blob([content]).size;
+                note.tags = result.tags || [];
+            }
+
+            // Reload tags to update sidebar counts (debounced to prevent spam).
+            this.loadTagsDebounced();
+            if (this.selectedTags.length > 0) {
+                this.buildFolderTree();
+            }
+
+            // Hide the "saved" indicator.
+            setTimeout(() => {
+                this.lastSaved = false;
+            }, CONFIG.SAVE_INDICATOR_DURATION);
         },
 
         // Ask what to do when the server refused a save because the file changed on disk.
         // Resolves true to overwrite. Escape, a click outside or "Reload" keep the disk version.
         async _askSaveConflict(notePath) {
-            this._saveConflictOpen = true;
-            try {
-                const name = notePath.split('/').pop().replace('.md', '');
-                return await this.confirmModalAsk({
-                    title: this.t('notes.save_conflict_title'),
-                    message: this.t('notes.save_conflict_message', { name }),
-                    danger: true,
-                    confirmLabel: this.t('notes.save_conflict_overwrite'),
-                    cancelLabel: this.t('notes.save_conflict_reload')
-                });
-            } finally {
-                this._saveConflictOpen = false;
-            }
+            const name = notePath.split('/').pop().replace('.md', '');
+            return await this.confirmModalAsk({
+                title: this.t('notes.save_conflict_title'),
+                message: this.t('notes.save_conflict_message', { name }),
+                danger: true,
+                confirmLabel: this.t('notes.save_conflict_overwrite'),
+                cancelLabel: this.t('notes.save_conflict_reload')
+            });
         },
 
         // Rename current note

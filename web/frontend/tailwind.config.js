@@ -4,13 +4,13 @@
  * used to compile styles in the browser at runtime).
  *
  * Rebuild with ./build-tailwind.sh whenever classes change in index.html or
- * app.js. Keep content globs in sync with any new source file that embeds
- * class attributes.
+ * the JS sources. app.js is deliberately not scanned: it is generated from
+ * src/, and minifier output changes would otherwise churn tailwind.css even
+ * when no class was added or removed.
  */
 module.exports = {
   content: [
     './index.html',
-    './app.js',
     './src/**/*.js',
     './editor-markdown-continue.js',
   ],

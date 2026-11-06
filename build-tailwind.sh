@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Rebuild web/frontend/tailwind.css from the utility classes referenced in
-# index.html / app.js / editor-markdown-continue.js.
+# index.html, src/ and editor-markdown-continue.js.
 #
 # Run this after adding or renaming Tailwind classes in those files, then
 # commit the regenerated tailwind.css together with your change.
