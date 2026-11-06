@@ -522,6 +522,10 @@ export function createSidebar() {
                 this.deleteNote(el.dataset.path, el.dataset.name);
             }
         },
+        handleRenameMediaClick(el, event) {
+            event.stopPropagation();
+            this.renameMedia(el.dataset.path);
+        },
         
         // =====================================================================
         // FOLDER TREE RENDERING
@@ -637,6 +641,9 @@ export function createSidebar() {
             // stroked icon (image/audio/video) so rows stay visually consistent.
             const kind = treeIconKind(note.type);
             const icon = kind ? treeIconSvg(kind) : this.getMediaIcon(note.type);
+            // PDFs are the one media type that gets an inline rename button in
+            // the sidebar (notes are renamed from the editor toolbar).
+            const isPdf = kind === 'pdf' || /\.pdf$/i.test(note.path);
             // Media rows show their extension: the name is stored without one,
             // so "orcamento" alone would not tell a PDF from a note.
             const extMatch = isMediaFile ? note.path.match(/\.[^./]+$/) : null;
@@ -654,13 +661,26 @@ export function createSidebar() {
                     ondragstart="window.$root.onItemDragStart(this.dataset.path, this.dataset.type || 'note', event)"
                     ondragend="window.$root.onItemDragEnd()"
                     onclick="window.$root.handleItemClick(this)"
-                    class="tree-row note-item ${treeKindClass(kind)}${isCurrent ? ' tree-active active' : ''}"
+                    class="tree-row note-item ${treeKindClass(kind)}${isPdf ? ' note-item--has-rename' : ''}${isCurrent ? ' tree-active active' : ''}"
                     title="${esc(note.path)}"
                     style="${isCurrent ? 'background-color: var(--accent-light); color: var(--accent-primary);' : ''}"
                 >
                     <span class="tree-indent" aria-hidden="true"></span>
                     ${icon}
                     <span class="tree-label">${esc(note.name)}${ext ? `<span class="tree-ext">${esc(ext)}</span>` : ''}</span>
+                    ${isPdf ? `
+                    <button 
+                        data-path="${esc(note.path)}"
+                        onclick="window.$root.handleRenameMediaClick(this, event)"
+                        class="note-rename-btn tree-action"
+                        style="opacity: 0;"
+                        title="${esc(this.t('media.rename'))}"
+                    >
+                        <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 20h9"></path>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"></path>
+                        </svg>
+                    </button>` : ''}
                     <button 
                         data-path="${esc(note.path)}"
                         data-name="${esc(note.name)}"

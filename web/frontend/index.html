@@ -662,9 +662,21 @@
             padding-right: 22px;
         }
 
+        .note-item--has-rename .tree-label {
+            padding-right: 44px;
+        }
+
         .note-delete-btn {
             position: absolute;
             right: 4px;
+            top: 50%;
+            transform: translateY(-50%);
+            transition: opacity 0.15s ease;
+        }
+
+        .note-rename-btn {
+            position: absolute;
+            right: 26px;
             top: 50%;
             transform: translateY(-50%);
             transition: opacity 0.15s ease;
@@ -756,6 +768,11 @@
 
         /* Note delete button on hover */
         .note-item:hover .note-delete-btn {
+            opacity: 1 !important;
+        }
+
+        /* PDF rename button on hover */
+        .note-item:hover .note-rename-btn {
             opacity: 1 !important;
         }
 
@@ -2920,8 +2937,12 @@
             <template x-if="currentNote || currentMedia">
                 <!-- Editor Area -->
                 <div class="flex-1 flex flex-col overflow-hidden" :class="{'zen-editor-container': zenMode}" style="background-color: var(--bg-primary);">
-                    <!-- Toolbar -->
-                    <div class="px-3 py-2 flex items-center justify-between mobile-toolbar zen-hide" style="background-color: var(--bg-secondary); border-bottom: 1px solid var(--border-primary);">
+                    <!-- Toolbar (hidden for PDFs so the viewer gets the full height) -->
+                    <div
+                        x-show="!(currentMedia && currentMediaType === 'document')"
+                        class="px-3 py-2 flex items-center justify-between mobile-toolbar zen-hide"
+                        style="background-color: var(--bg-secondary); border-bottom: 1px solid var(--border-primary);"
+                    >
                         <div class="flex items-center space-x-1.5">
                             <!-- Mobile Menu Button -->
                             <button 
@@ -3577,6 +3598,57 @@
                 <button
                     type="button"
                     @click="cancelRenameFolderModal()"
+                    class="flex-1 px-4 py-2 rounded font-medium transition-colors"
+                    style="background-color: var(--bg-tertiary); color: var(--text-primary);"
+                    onmouseover="this.style.backgroundColor='var(--bg-hover)'"
+                    onmouseout="this.style.backgroundColor='var(--bg-tertiary)'"
+                    x-text="t('common.cancel')"
+                ></button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Rename media file (PDFs and other attachments) -->
+    <div x-show="showRenameMediaModal"
+         @click.self="cancelRenameMediaModal()"
+         @keydown.escape.window="showRenameMediaModal && cancelRenameMediaModal()"
+         class="fixed inset-0 flex items-center justify-center"
+         style="background-color: rgba(0, 0, 0, 0.5); z-index: 1100;"
+         x-cloak>
+        <div class="rounded-lg shadow-xl p-6 max-w-md w-full mx-4"
+             style="background-color: var(--bg-secondary); color: var(--text-primary);"
+             @click.stop>
+            <h2 class="text-xl font-bold mb-2" style="color: var(--text-primary);" x-text="t('media.rename_modal_title')"></h2>
+            <p class="text-sm mb-4" style="color: var(--text-secondary);" x-text="t('media.rename_modal_description', { name: renameMediaOldName, extension: renameMediaExtension })"></p>
+            <div class="mb-4">
+                <label for="rename-media-modal-input" class="block text-sm font-medium mb-2" style="color: var(--text-secondary);" x-text="t('media.rename_modal_label')"></label>
+                <div class="flex items-center gap-2">
+                    <input
+                        id="rename-media-modal-input"
+                        type="text"
+                        x-model="renameMediaInput"
+                        :placeholder="renameMediaOldName"
+                        class="w-full px-3 py-2 rounded border"
+                        style="background-color: var(--bg-tertiary); color: var(--text-primary); border-color: var(--border-primary);"
+                        @keydown.enter="submitRenameMediaModal()"
+                        autocomplete="off"
+                    />
+                    <span class="text-sm font-medium flex-shrink-0" style="color: var(--text-tertiary);" x-text="renameMediaExtension"></span>
+                </div>
+            </div>
+            <div class="flex gap-2">
+                <button
+                    type="button"
+                    @click="submitRenameMediaModal()"
+                    class="flex-1 px-4 py-2 rounded font-medium text-white transition-colors"
+                    style="background-color: var(--accent-primary);"
+                    onmouseover="this.style.backgroundColor='var(--accent-hover)'"
+                    onmouseout="this.style.backgroundColor='var(--accent-primary)'"
+                    x-text="t('common.rename')"
+                ></button>
+                <button
+                    type="button"
+                    @click="cancelRenameMediaModal()"
                     class="flex-1 px-4 py-2 rounded font-medium transition-colors"
                     style="background-color: var(--bg-tertiary); color: var(--text-primary);"
                     onmouseover="this.style.backgroundColor='var(--bg-hover)'"

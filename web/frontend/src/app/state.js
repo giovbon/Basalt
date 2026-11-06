@@ -97,7 +97,7 @@ export function createState() {
         translations: window.__preloadedTranslations || {},
         
         // Syntax highlighting
-        syntaxHighlightEnabled: false,
+        syntaxHighlightEnabled: true,
         syntaxHighlightTimeout: null,
         
         // Readable line length (preview max-width)
@@ -208,6 +208,13 @@ export function createState() {
         renameFolderPath: '',
         renameFolderOldName: '',
         renameFolderInput: '',
+
+        // Rename media file modal (PDFs and other attachments)
+        showRenameMediaModal: false,
+        renameMediaPath: '',
+        renameMediaOldName: '',
+        renameMediaExtension: '',
+        renameMediaInput: '',
         
         // Generic confirm dialog (replaces window.confirm)
         showConfirmModal: false,

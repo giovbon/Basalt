@@ -39,6 +39,16 @@ test('an empty storage yields every declared default', () => {
     assert.deepEqual(values.favorites, []);
 });
 
+test('editor syntax highlighting is enabled by default', () => {
+    const values = readLocalSettings(LOCAL_SETTINGS, new MemoryStorage());
+    assert.equal(values.syntaxHighlightEnabled, true);
+    assert.equal(
+        readLocalSettings(LOCAL_SETTINGS, new MemoryStorage({ syntaxHighlightEnabled: 'false' })).syntaxHighlightEnabled,
+        false,
+        'an explicit user preference is still respected',
+    );
+});
+
 test('booleans, numbers, strings and JSON are decoded by type', () => {
     const storage = new MemoryStorage({
         readableLineLength: 'false',

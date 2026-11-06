@@ -238,7 +238,13 @@
     "upload_failed": "Falha ao enviar o arquivo",
     "no_valid_files": "Nenhum arquivo válido encontrado. Suportados: {{formats}}",
     "upload_button": "Enviar",
-    "upload_success": "{{count}} arquivo(s) enviado(s) com sucesso"
+    "upload_success": "{{count}} arquivo(s) enviado(s) com sucesso",
+    "rename": "Renomear arquivo",
+    "rename_modal_title": "Renomear arquivo",
+    "rename_modal_description": "Digite o novo nome de \"{{name}}\". A extensão {{extension}} é mantida automaticamente.",
+    "rename_modal_label": "Novo nome",
+    "invalid_name": "O nome do arquivo não pode ficar vazio.",
+    "already_exists": "Já existe um arquivo chamado \"{{name}}\" neste local."
   },
   "move": {
     "failed_note": "Falha ao mover a nota.",

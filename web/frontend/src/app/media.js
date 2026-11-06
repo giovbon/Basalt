@@ -575,5 +575,86 @@ export function createMedia() {
                 await this.loadNotes({ silent: true });
             }
         },
+
+        // Open the rename dialog for a media file. The extension is kept
+        // automatically, so the user edits only the visible stem.
+        renameMedia(mediaPath) {
+            const filename = mediaPath.split('/').pop();
+            const dot = filename.lastIndexOf('.');
+            const extension = dot > 0 ? filename.slice(dot) : '';
+            const stem = dot > 0 ? filename.slice(0, dot) : filename;
+
+            this.renameMediaPath = mediaPath;
+            this.renameMediaOldName = filename;
+            this.renameMediaExtension = extension;
+            this.renameMediaInput = stem;
+            this.showRenameMediaModal = true;
+            this.mobileSidebarOpen = false;
+            this.$nextTick(() => {
+                const el = document.getElementById('rename-media-modal-input');
+                if (el) {
+                    el.focus();
+                    el.select();
+                }
+            });
+        },
+
+        closeRenameMediaModal() {
+            this.showRenameMediaModal = false;
+            this.renameMediaPath = '';
+            this.renameMediaOldName = '';
+            this.renameMediaExtension = '';
+            this.renameMediaInput = '';
+        },
+
+        cancelRenameMediaModal() {
+            this.closeRenameMediaModal();
+        },
+
+        async submitRenameMediaModal() {
+            const oldPath = this.renameMediaPath;
+            const extension = this.renameMediaExtension;
+            const newStem = (this.renameMediaInput || '').trim();
+            if (!oldPath) return;
+            if (!newStem) {
+                this.toast(this.t('media.invalid_name'), { type: 'warning' });
+                return;
+            }
+
+            const validation = FilenameValidator.validateFilename(newStem);
+            if (!validation.valid) {
+                this.toast(this.getValidationErrorMessage(validation, 'note'), { type: 'warning' });
+                return;
+            }
+
+            const filename = validation.sanitized + extension;
+            const folder = oldPath.split('/').slice(0, -1).join('/');
+            const newPath = folder ? `${folder}/${filename}` : filename;
+            if (newPath === oldPath) {
+                this.closeRenameMediaModal();
+                return;
+            }
+            if (this.notePathTaken(newPath)) {
+                this.toast(this.t('media.already_exists', { name: filename }), { type: 'warning' });
+                return;
+            }
+
+            const wasCurrentMedia = this.currentMedia === oldPath;
+            this._optimisticRenameNote(oldPath, newPath);
+            this._rebuildTreeAfterMutation();
+            if (wasCurrentMedia) {
+                this.currentMedia = newPath;
+                document.title = `${filename} - ${this.appName}`;
+            }
+
+            try {
+                await api.sendJSON('/api/media/move', 'POST', { oldPath, newPath });
+                await this.loadNotes({ silent: true });
+                this.closeRenameMediaModal();
+            } catch (error) {
+                ErrorHandler.handle('rename media', error);
+                await this.loadNotes({ silent: true });
+            }
+        },
     };
 }

@@ -28,7 +28,7 @@ export const CONFIG = {
 // localStorage settings configuration - centralized definition of all persisted settings
 export const LOCAL_SETTINGS = {
     // Boolean settings
-    syntaxHighlightEnabled: { key: 'syntaxHighlightEnabled', type: 'boolean', default: false },
+    syntaxHighlightEnabled: { key: 'syntaxHighlightEnabled', type: 'boolean', default: true },
     readableLineLength: { key: 'readableLineLength', type: 'boolean', default: true },
     favoritesExpanded: { key: 'favoritesExpanded', type: 'boolean', default: true },
     tagsExpanded: { key: 'tagsExpanded', type: 'boolean', default: false },
