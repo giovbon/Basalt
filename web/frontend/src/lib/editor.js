@@ -7,6 +7,24 @@
 /** Max leading spaces Shift+Tab removes per line when matching one "tab indent" vs \t inserts. */
 export const EDITOR_TAB_OUTDENT_MAX_SPACES = 4;
 
+/**
+ * Characters for physical keys that are dead keys on some layouts. On pt-BR
+ * ABNT/ABNT2 (and US International) the grave/backtick key is a dead key, so
+ * keydown reports `key === 'Dead'` instead of "`". Falling back to `code`
+ * lets typing a delimiter over a selection still wrap it in `...`.
+ */
+export const EDITOR_DEAD_KEY_CHARS = {
+    Backquote: '`',
+    BracketLeft: '`',
+};
+
+/** Character a keydown would type, resolving dead keys via their physical code. */
+export function editorKeyChar(event) {
+    if (typeof event.key === 'string' && event.key.length === 1) return event.key;
+    if (event.key === 'Dead') return EDITOR_DEAD_KEY_CHARS[event.code] || null;
+    return null;
+}
+
 /** How many leading indent characters Shift+Tab removes from one line. */
 export function editorIndentRemoveLen(lineSegment) {
     if (!lineSegment || lineSegment.length === 0) return 0;
@@ -71,17 +89,16 @@ export function editorMapCaretAfterIndent(chunk, newChunk, rel) {
 }
 
 /**
- * Tab with a multi-line selection: prefix every selected line with a tab and
- * keep the selection in place. A plain Tab (collapsed caret or a selection
- * inside one line) still inserts a single tab at the caret, which the caller
- * handles so the character lands exactly where the user is typing.
+ * Tab with a selection: prefix every selected (or partly selected) line with a
+ * tab and keep the selection in place. A collapsed caret is left to the caller,
+ * which inserts a single tab exactly where the user is typing.
  *
  * @returns {{ changed: boolean, text: string, selStart: number, selEnd: number }}
  */
 export function applyEditorIndent(text, selStart, selEnd) {
     const a = Math.min(selStart, selEnd);
     const b = Math.max(selStart, selEnd);
-    if (a === b || !text.slice(a, b).includes('\n')) {
+    if (a === b) {
         return { changed: false, text, selStart, selEnd };
     }
 

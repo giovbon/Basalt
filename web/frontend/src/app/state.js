@@ -107,8 +107,9 @@ export function createState() {
         // Read synchronously to prevent flash on initial render
         hideUnderscoreFolders: localStorage.getItem('hideUnderscoreFolders') === 'true',
 
-        // Tab key inserts tab character instead of changing focus
-        tabInsertsTab: localStorage.getItem('tabInsertsTab') === 'true',
+        // Tab key indents instead of changing focus. Defaults to on; only an
+        // explicit "false" turns the native tab-focus behaviour back on.
+        tabInsertsTab: localStorage.getItem('tabInsertsTab') !== 'false',
 
         // Note sorting mode (a-z, z-a, newest, oldest, largest, smallest)
         sortMode: localStorage.getItem('sortMode') || 'a-z',

@@ -33,7 +33,7 @@ export const LOCAL_SETTINGS = {
     favoritesExpanded: { key: 'favoritesExpanded', type: 'boolean', default: true },
     tagsExpanded: { key: 'tagsExpanded', type: 'boolean', default: false },
     hideUnderscoreFolders: { key: 'hideUnderscoreFolders', type: 'boolean', default: false },
-    tabInsertsTab: { key: 'tabInsertsTab', type: 'boolean', default: false },
+    tabInsertsTab: { key: 'tabInsertsTab', type: 'boolean', default: true },
     sidebarPanelCollapsed: { key: 'sidebarPanelCollapsed', type: 'boolean', default: false },
     autoFillNoteTitle: { key: 'autoFillNoteTitle', type: 'boolean', default: false },
     // String settings

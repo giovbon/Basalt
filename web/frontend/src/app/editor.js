@@ -3,7 +3,7 @@
 // Split out of the former monolith src/main.js; noteApp() in main.js composes
 // this factory's object with the other feature slices (see compose()).
 
-import { applyEditorIndent, applyEditorOutdent, applyMarkdownWrap } from '../lib/editor.js';
+import { applyEditorIndent, applyEditorOutdent, applyMarkdownWrap, editorKeyChar } from '../lib/editor.js';
 
 // Delimiters that wrap an active selection when typed directly in the editor.
 // Typing "*" then "*" therefore nests into "**bold**" while the selection stays
@@ -24,8 +24,16 @@ const AUTO_WRAP_PAIRS = {
 export function createEditor() {
     return {
 
-        // Handle Tab key in editor (indents; Shift+Tab outdents matching lines)
+        // True while a dead key (e.g. the grave accent on ABNT2) is still
+        // pending in the browser after wrapping a selection with it.
+        _editorDeadKeyPending: false,
+
+        // Handle Tab key in editor (indents; Shift+Tab outdents matching lines).
+        // When the "Tab inserts tab" setting is off, Tab keeps its native
+        // behaviour and moves focus out of the editor.
         handleTabKey(event) {
+            if (!this.tabInsertsTab) return;
+
             const textarea = event.target;
             const start = textarea.selectionStart;
             const end = textarea.selectionEnd;
@@ -47,7 +55,7 @@ export function createEditor() {
 
             event.preventDefault();
 
-            // A multi-line selection gets one tab per line instead of being
+            // A selection gets one tab per affected line instead of being
             // replaced by a single tab character.
             const multiline = applyEditorIndent(this.noteContent, start, end);
             if (multiline.changed) {
@@ -70,17 +78,23 @@ export function createEditor() {
         // Single keydown entry point: wikilink autocomplete gets first refusal,
         // then typing a delimiter over a selection wraps that selection.
         handleEditorKeydown(event) {
+            if (this._editorDeadKeyPending && this.consumeEditorDeadKey(event)) return;
             this.wlOnKeydown(event);
             if (event.defaultPrevented) return;
             this.wrapSelectionOnType(event);
         },
 
         wrapSelectionOnType(event) {
-            if (event.defaultPrevented || event.isComposing) return;
+            if (event.defaultPrevented) return;
+            // A dead key can still report isComposing; it is exactly the case
+            // we want to resolve through the physical key code below.
+            if (event.isComposing && event.key !== 'Dead') return;
             if (event.ctrlKey || event.metaKey || event.altKey) return;
-            if (typeof event.key !== 'string' || event.key.length !== 1) return;
 
-            const pair = AUTO_WRAP_PAIRS[event.key];
+            const key = editorKeyChar(event);
+            if (!key) return;
+
+            const pair = AUTO_WRAP_PAIRS[key];
             if (!pair) return;
 
             const editor = event.target;
@@ -88,7 +102,71 @@ export function createEditor() {
             if (editor.selectionStart === editor.selectionEnd) return;
 
             event.preventDefault();
-            this.wrapSelection(pair[0], pair[1], '');
+            // A dead key (e.g. the grave key on ABNT2) stays pending after
+            // preventDefault: the next keystroke would commit an accent and
+            // overwrite the selection. Collapse the caret after the closing
+            // delimiter and consume that next keystroke instead.
+            const deadKey = key !== event.key;
+            this.wrapSelection(pair[0], pair[1], '', { collapseToEnd: deadKey });
+            if (deadKey) this._editorDeadKeyPending = true;
+        },
+
+        clearEditorDeadKeyPending() {
+            this._editorDeadKeyPending = false;
+        },
+
+        // Consume the keystroke that would otherwise commit a pending dead key
+        // over the text we just wrapped. Returns true when the event was used.
+        consumeEditorDeadKey(event) {
+            const key = event.key;
+
+            // Modifiers alone do not commit the accent; keep waiting.
+            if (key === 'Shift' || key === 'Control' || key === 'Alt'
+                || key === 'AltGraph' || key === 'Meta' || key === 'CapsLock' || key === 'OS') {
+                return false;
+            }
+
+            // Another dead key (or the same one) commits a literal accent.
+            if (key === 'Dead' || key === 'Process' || key === 'Unidentified') {
+                event.preventDefault();
+                this._editorDeadKeyPending = false;
+                return true;
+            }
+
+            // Navigation/editing keys cancel the dead accent by themselves.
+            if (typeof key !== 'string' || key.length > 1) {
+                this._editorDeadKeyPending = false;
+                return false;
+            }
+
+            // Keep keyboard shortcuts working; the modifier combo cancels it.
+            if (event.ctrlKey || event.metaKey || event.altKey) {
+                this._editorDeadKeyPending = false;
+                return false;
+            }
+
+            event.preventDefault();
+            this._editorDeadKeyPending = false;
+
+            // Space is the usual "commit" key for a dead accent on ABNT2, so
+            // swallow it instead of replacing the selected text. Any other
+            // printable key is typed normally, ignoring the pending accent.
+            if (key !== ' ') this.insertTextAtSelection(key);
+            return true;
+        },
+
+        insertTextAtSelection(text) {
+            const editor = document.getElementById('note-editor');
+            if (!editor) return;
+
+            const start = editor.selectionStart;
+            const end = editor.selectionEnd;
+            this.noteContent = this.noteContent.substring(0, start) + text + this.noteContent.substring(end);
+
+            this.$nextTick(() => {
+                editor.selectionStart = editor.selectionEnd = start + text.length;
+            });
+            this.autoSave();
         },
 
         /**
@@ -252,39 +330,32 @@ export function createEditor() {
             }
         },
 
-        wrapSelection(before, after, placeholder) {
+        wrapSelection(before, after, placeholder, { collapseToEnd = false } = {}) {
             const editor = document.getElementById('note-editor');
             if (!editor) return;
-            
-            const start = editor.selectionStart;
-            const end = editor.selectionEnd;
-            const selectedText = this.noteContent.substring(start, end);
 
-            // Push edge whitespace OUTSIDE inline wrappers — "**house **" is
-            // invalid per CommonMark. Block wrappers (with \n) keep it intact.
-            const isInline = !before.includes('\n') && !after.includes('\n');
-            let leading = '', trailing = '', core = selectedText;
-            if (isInline && selectedText) {
-                const m = selectedText.match(/^(\s*)([\s\S]*?)(\s*)$/);
-                leading = m[1];
-                core = m[2];
-                trailing = m[3];
-            }
-            const textToWrap = core || placeholder;
-            
-            // Build the new text
-            const newText = leading + before + textToWrap + after + trailing;
-            
-            // Update content
-            this.noteContent = this.noteContent.substring(0, start) + newText + this.noteContent.substring(end);
-            
+            const result = applyMarkdownWrap(
+                this.noteContent,
+                editor.selectionStart,
+                editor.selectionEnd,
+                before,
+                after,
+                placeholder
+            );
+
+            this.noteContent = result.text;
+
+            // Dead keys collapse the caret after the closing delimiter so the
+            // next keystroke continues typing instead of replacing the wrapped
+            // selection (toolbar/formatting shortcuts keep it selected).
+            const caret = collapseToEnd ? result.selEnd + after.length : result.selStart;
+            const selEnd = collapseToEnd ? caret : result.selEnd;
+
             this.$nextTick(() => {
-                const coreStart = start + leading.length + before.length;
-                const coreEnd = coreStart + textToWrap.length;
-                editor.setSelectionRange(coreStart, coreEnd);
+                editor.setSelectionRange(caret, selEnd);
                 editor.focus();
             });
-            
+
             // Trigger autosave
             this.autoSave();
         },
