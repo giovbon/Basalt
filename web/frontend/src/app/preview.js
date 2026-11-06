@@ -5,6 +5,7 @@
 
 import * as api from '../core/api.js';
 import { encodeVaultPath } from '../core/utils.js';
+import { renderMarkdownSync } from '../lib/markdown-render.js';
 import { scanTaskLines, toggleTaskAt, setAllTasks } from '../lib/tasks.js';
 import { typeIconSvg } from '../lib/file-icons.js';
 
@@ -378,531 +379,73 @@ export function createPreview() {
         
         
         // Computed property for rendered markdown
+        
+        // Rendered markdown HTML for the preview pane. This is a cached value
+        // updated by renderPreview(); the getter just returns it (or a placeholder).
         get renderedMarkdown() {
             if (!this.noteContent) return '<p style="color: var(--text-tertiary);">Nothing to preview yet...</p>';
-            
-            // Performance: Return cached HTML if content hasn't changed
-            if (this.noteContent === this._lastRenderedContent &&
-                this.currentNote === this._lastRenderedNote &&
-                this._cachedRenderedHTML) {
+            return this._cachedRenderedHTML || '<p style="color: var(--text-tertiary);">Rendering preview...</p>';
+        },
+
+        // Synchronous markdown rendering + DOM post-processing setup.
+        // Call this when noteContent or currentNote changes.
+        renderPreview() {
+            if (!this.noteContent) {
+                this._cachedRenderedHTML = '<p style="color: var(--text-tertiary);">Nothing to preview yet...</p>';
                 return this._cachedRenderedHTML;
             }
-            
-            // Strip YAML frontmatter from content before rendering
-            let contentToRender = this.noteContent;
-            if (contentToRender.trim().startsWith('---')) {
-                const lines = contentToRender.split('\n');
-                if (lines[0].trim() === '---') {
-                    // Find closing ---
-                    let endIdx = -1;
-                    for (let i = 1; i < lines.length; i++) {
-                        if (lines[i].trim() === '---') {
-                            endIdx = i;
-                            break;
-                        }
-                    }
-                    if (endIdx !== -1) {
-                        // Remove frontmatter (including the closing ---) and any empty lines after it
-                        contentToRender = lines.slice(endIdx + 1).join('\n').trim();
-                    }
-                }
-            }
-            
-            // Convert Obsidian-style wikilinks: [[note]] or [[note|display text]]
-            // Must be done before marked.parse() to avoid conflicts with markdown syntax
-            // BUT we need to protect code blocks first to avoid converting [[text]] inside code
-            const self = this; // Reference for closure
 
-            // Parses an Obsidian-style inline image size spec from an alt-like string.
-            // Returns { alt, width, height } — width/height are null when not specified.
-            //
-            //   parseImageSizeSpec("caption")            -> {alt:"caption",  w:null, h:null}
-            //   parseImageSizeSpec("caption|100")        -> {alt:"caption",  w:100,  h:null}
-            //   parseImageSizeSpec("caption|100x200")    -> {alt:"caption",  w:100,  h:200}
-            //   parseImageSizeSpec("100", {allowSolo})   -> {alt:"",         w:100,  h:null}   (wikilink only)
-            //   parseImageSizeSpec("100x200",{allowSolo})-> {alt:"",         w:100,  h:200}    (wikilink only)
-            //
-            // A dimension of 0 is treated as "unset" (Obsidian convention: |0x200 = height only).
-            // allowSolo=true accepts a bare `<digits>` string as a size; used for wikilinks
-            // where `![[img|100]]` unambiguously means "size 100" (no alt to confuse). For
-            // standard markdown `![100](x)` we default allowSolo=false so "100" stays as alt.
-            const parseImageSizeSpec = (text, opts = {}) => {
-                const allowSolo = opts.allowSolo === true;
-                if (!text) return { alt: '', width: null, height: null };
-                const trimmed = text.trim();
-                if (allowSolo) {
-                    const solo = trimmed.match(/^(\d+)(?:[xX](\d+))?$/);
-                    if (solo) {
-                        const w = parseInt(solo[1], 10);
-                        const h = solo[2] !== undefined ? parseInt(solo[2], 10) : null;
-                        return {
-                            alt: '',
-                            width: w > 0 ? w : null,
-                            height: (h !== null && h > 0) ? h : null,
-                        };
-                    }
-                }
-                const idx = trimmed.lastIndexOf('|');
-                if (idx === -1) return { alt: trimmed, width: null, height: null };
-                const size = trimmed.slice(idx + 1).trim();
-                const m = size.match(/^(\d+)(?:[xX](\d+))?$/);
-                if (!m) return { alt: trimmed, width: null, height: null };
-                const w = parseInt(m[1], 10);
-                const h = m[2] !== undefined ? parseInt(m[2], 10) : null;
-                return {
-                    alt: trimmed.slice(0, idx).trim(),
-                    width: w > 0 ? w : null,
-                    height: (h !== null && h > 0) ? h : null,
-                };
-            };
-
-            // Step 0: GFM/GLFM callouts. Runs BEFORE code-block extraction so
-            // fences nested in a callout blockquote lose their `> ` prefix on
-            // the closer — otherwise CommonMark won't see a valid fence closer
-            // once restored inside <div class="callout-body"> and the block
-            // runs unclosed. Fence-aware so `> [!TIP]` literal inside a
-            // top-level code block is not misread as a callout.
-            {
-                const CALLOUT_RE = /^>\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*(.*)$/i;
-                const svg = (paths) => '<svg class="callout-icon-svg" viewBox="0 0 24 24" '
-                    + 'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" '
-                    + 'stroke-linejoin="round" aria-hidden="true">' + paths + '</svg>';
-                const CALLOUT_ICONS = {
-                    note: svg('<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>'),
-                    tip: svg('<path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z"/>'),
-                    important: svg('<circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/>'),
-                    warning: svg('<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/>'),
-                    caution: svg('<path d="M7.86 2h8.28L22 7.86v8.28L16.14 22H7.86L2 16.14V7.86L7.86 2z"/><path d="M12 8v4"/><path d="M12 16h.01"/>'),
-                };
-                const CALLOUT_TITLES = { note: 'Note', tip: 'Tip', important: 'Important', warning: 'Warning', caution: 'Caution' };
-                // Fence opener at 0-3 spaces indent (CommonMark). Captured
-                // group holds the fence chars so the closer must match char + length.
-                const FENCE_OPEN_RE = /^\s{0,3}(`{3,}|~{3,})/;
-                const escapeAttr = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
-                const srcLines = contentToRender.split('\n');
-                const outLines = [];
-                let li = 0;
-                let fenceChar = null; // '`' or '~' when inside a top-level fence
-                let fenceLen = 0;
-                while (li < srcLines.length) {
-                    const line = srcLines[li];
-
-                    // Inside a top-level fence: pass through opaquely.
-                    if (fenceChar) {
-                        outLines.push(line);
-                        const closeRe = new RegExp('^\\s{0,3}' + (fenceChar === '`' ? '`' : '~') + '{' + fenceLen + ',}\\s*$');
-                        if (closeRe.test(line)) { fenceChar = null; fenceLen = 0; }
-                        li++;
-                        continue;
-                    }
-
-                    const fenceOpen = line.match(FENCE_OPEN_RE);
-                    if (fenceOpen) {
-                        fenceChar = fenceOpen[1][0];
-                        fenceLen = fenceOpen[1].length;
-                        outLines.push(line);
-                        li++;
-                        continue;
-                    }
-
-                    const m = line.match(CALLOUT_RE);
-                    if (!m) {
-                        outLines.push(line);
-                        li++;
-                        continue;
-                    }
-                    const type = m[1].toLowerCase();
-                    const title = escapeAttr((m[2] || '').trim() || CALLOUT_TITLES[type]);
-                    const icon = CALLOUT_ICONS[type];
-                    const bodyLines = [];
-                    li++;
-                    // Fence lines inside the callout also start with `>`, so
-                    // they get absorbed and stripped, leaving a clean fence.
-                    while (li < srcLines.length && srcLines[li].startsWith('>')) {
-                        bodyLines.push(srcLines[li].replace(/^>\s?/, ''));
-                        li++;
-                    }
-                    outLines.push(
-                        '',
-                        `<div class="callout callout-${type}">`,
-                        `<div class="callout-title"><span class="callout-icon" aria-hidden="true">${icon}</span><span class="callout-title-text">${title}</span></div>`,
-                        `<div class="callout-body">`,
-                        '',
-                        bodyLines.join('\n'),
-                        '',
-                        `</div>`,
-                        `</div>`,
-                        ''
-                    );
-                }
-                contentToRender = outLines.join('\n');
-            }
-
-            // Step 1: Temporarily replace code blocks and inline code with placeholders
-            const codeBlocks = [];
-            // Protect fenced code blocks (```...```)
-            contentToRender = contentToRender.replace(/```[\s\S]*?```/g, (match) => {
-                codeBlocks.push(match);
-                return `\x00CODEBLOCK${codeBlocks.length - 1}\x00`;
-            });
-            // Protect inline code (`...`)
-            contentToRender = contentToRender.replace(/`[^`]+`/g, (match) => {
-                codeBlocks.push(match);
-                return `\x00CODEBLOCK${codeBlocks.length - 1}\x00`;
-            });
-            
-            // Step 2: Convert media wikilinks FIRST: ![[file.png]] or ![[file.png|alt text]]
-            // Must be before note wikilinks to prevent [[file.png]] from being matched first
-            //
-            // Also supports Obsidian-style inline sizing:
-            //   ![[img.jpg|100]]            -> width 100
-            //   ![[img.jpg|100x200]]        -> width 100, height 200
-            //   ![[img.jpg|caption|100]]    -> alt "caption", width 100
-            // The `allowSolo:true` mode treats a bare `|<digits>` group as a size
-            // (Obsidian's wikilink convention). Standard markdown images require a
-            // pipe inside the alt text and are handled by the DOM walker below.
-            contentToRender = contentToRender.replace(
-                /!\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g,
-                (match, mediaName, altText) => {
-                    const filename = mediaName.trim();
-                    const rawAlt = altText ? altText.trim() : '';
-                    const spec = parseImageSizeSpec(rawAlt, { allowSolo: true });
-                    // If no explicit alt, fall back to the filename stem.
-                    const alt = spec.alt || filename.replace(/\.[^/.]+$/, '');
-                    // Emit width/height as BOTH HTML attributes (semantics, a11y)
-                    // AND inline style. Tailwind's Preflight `img { height: auto }`
-                    // wins over stylesheet rules that use attribute selectors, so
-                    // inline style is the reliable way to pin the size.
-                    const stylePieces = [];
-                    if (spec.width) stylePieces.push(`width:${spec.width}px`);
-                    if (spec.height) stylePieces.push(`height:${spec.height}px`);
-                    const sizeAttrs = (spec.width ? ` width="${spec.width}"` : '') +
-                                      (spec.height ? ` height="${spec.height}"` : '') +
-                                      (stylePieces.length ? ` style="${stylePieces.join(';')}"` : '');
-                    
-                    // Resolve media path using O(1) lookup
-                    const mediaPath = self.resolveMediaWikilink(filename);
-                    
-                    if (mediaPath) {
-                        // URL-encode path segments for the API
-                        const encodedPath = mediaPath.split('/').map(segment => {
-                            try {
-                                return encodeURIComponent(decodeURIComponent(segment));
-                            } catch (e) {
-                                return encodeURIComponent(segment);
-                            }
-                        }).join('/');
-                        
-                        const safeAlt = alt.replace(/"/g, '&quot;');
-                        const mediaSrc = `/api/media/${encodedPath}`;
-                        const mediaType = self.getMediaType(filename);
-                        
-                        // Return appropriate HTML based on media type.
-                        // Size attributes only apply to images; non-image media
-                        // ignores the size (still strips it from the caption).
-                        switch (mediaType) {
-                            case 'audio':
-                                return `<div class="media-embed media-audio"><audio controls preload="none" src="${mediaSrc}" title="${safeAlt}"></audio><span class="media-caption">${safeAlt}</span></div>`;
-                            case 'video':
-                                return `<div class="media-embed media-video"><video controls preload="none" poster="" src="${mediaSrc}" title="${safeAlt}"></video></div>`;
-                            case 'document':
-                                // DOMPurify strips <iframe>, so emit a sentinel <span>
-                                // that survives sanitization; the DOM walker below
-                                // upgrades it to a media-pdf wrapper + iframe. Issue #239.
-                                return `<span class="md-pdf-embed" data-src="${mediaSrc}" data-alt="${safeAlt}"></span>`;
-                            default: // image
-                                return `<img src="${mediaSrc}" alt="${safeAlt}" title="${safeAlt}"${sizeAttrs}>`;
-                        }
-                    }
-                    
-                    // Media not found - return broken indicator
-                    const safeFilename = filename.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-                    const mediaType = self.getMediaType(filename);
-                    const icon = typeIconSvg(mediaType || 'image');
-                    return `<span class="wikilink-broken" title="Media not found">${icon} ${safeFilename}</span>`;
-                }
-            );
-            
-            // Step 2b: Convert note wikilinks: [[note]] or [[note|display text]]
-            contentToRender = contentToRender.replace(
-                /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g,
-                (match, target, displayText) => {
-                    const linkTarget = target.trim();
-                    const linkText = displayText ? displayText.trim() : linkTarget;
-                    
-                    // Resolve through the single resolver shared with click
-                    // navigation (mirrors vault.LinkResolver). The raw target is
-                    // kept when it resolves to nothing: that is what the
-                    // create-from-link prompt offers as the path of the new note.
-                    const hashIndex = linkTarget.indexOf('#');
-                    const basePath = hashIndex !== -1 ? linkTarget.substring(0, hashIndex) : linkTarget;
-                    const anchor = hashIndex !== -1 ? linkTarget.substring(hashIndex) : '';
-                    const sourceFolder = self.currentNote && self.currentNote.includes('/')
-                        ? self.currentNote.substring(0, self.currentNote.lastIndexOf('/'))
-                        : '';
-                    const resolvedPath = basePath === '' ? null : self.resolveWikiLink(basePath, sourceFolder);
-                    const noteExists = basePath === '' || resolvedPath !== null;
-                    
-                    // The href has to be absolute (a resolved note path), while an
-                    // unresolved target stays as written.
-                    const hrefTarget = resolvedPath !== null ? '/' + resolvedPath + anchor : linkTarget;
-                    
-                    // Escape special chars: href needs quote escaping, text needs HTML escaping
-                    const safeHref = hrefTarget.replace(/"/g, '%22');
-                    const safeText = linkText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-                    
-                    // Return link with data attribute for styling broken links
-                    const brokenClass = noteExists ? '' : ' class="wikilink-broken"';
-                    return `<a href="${safeHref}"${brokenClass} data-wikilink="true">${safeText}</a>`;
-                }
-            );
-            
-            // (Callouts handled in Step 0, before code-block extraction.)
-
-            contentToRender = contentToRender.replace(
-                /^(\s*[-*+]\s+\[[xX ]\]\s+)(\d+)\.(\s)/gm,
-                '$1$2\\.$3'
-            );
-            contentToRender = contentToRender.replace(
-                /^(\s*[-*+]\s+\[[xX ]\]\s+)([#>*+\-])(\s)/gm,
-                '$1\\$2$3'
-            );
-
-            // Step 3: Restore code blocks
-            contentToRender = contentToRender.replace(/\x00CODEBLOCK(\d+)\x00/g, (match, index) => {
-                return codeBlocks[parseInt(index)];
-            });
-            
-            // Protect LaTeX \(...\) and \[...\] delimiters from marked.js escaping
-            marked.use({
-                extensions: [{
-                    name: 'protectLatexMath',
-                    level: 'inline',
-                    start(src) { return src.match(/\\[\(\[]/)?.index; },
-                    tokenizer(src) {
-                        // Match \(...\) or \[...\]
-                        const match = src.match(/^(\\[\(\[])([\s\S]*?)(\\[\)\]])/);
-                        if (match) {
-                            return {
-                                type: 'html',
-                                raw: match[0],
-                                text: match[0]
-                            };
-                        }
-                    }
-                }]
+            // Build the synchronous HTML using the pure renderer
+            const html = renderMarkdownSync({
+                noteContent: this.noteContent,
+                currentNote: this.currentNote,
+                noteLookupByPath: this._noteLookup.byPath,
+                noteLookupByPathLower: this._noteLookup.byPathLower,
+                mediaLookup: this._mediaLookup,
+                mediaLookupStem: this._mediaLookupStem,
+                resolveWikiLink: this.resolveWikiLink.bind(this),
+                resolveMediaWikilink: this.resolveMediaWikilink.bind(this),
+                getMediaType: this.getMediaType.bind(this),
+                typeIconSvg,
+                escapeHtml: this.escapeHtml.bind(this),
             });
 
-            // Configure marked with syntax highlighting
-            marked.setOptions({
-                breaks: true,
-                gfm: true,
-                highlight: function(code, lang) {
-                    if (lang && hljs.getLanguage(lang)) {
-                        try {
-                            return hljs.highlight(code, { language: lang }).value;
-                        } catch (err) {
-                            console.error('Highlight error:', err);
-                        }
-                    }
-                    return hljs.highlightAuto(code).value;
-                }
-            });
-            
-            // Parse markdown
-            let html = marked.parse(contentToRender);
-            
-            // Sanitize HTML to prevent XSS attacks
-            // DOMPurify defaults allow most HTML/SVG tags but strip scripts, iframes, and event handlers
-            // MathJax and Mermaid run AFTER this, so their elements don't need whitelisting
-            html = DOMPurify.sanitize(html);
-            
-            // Post-process: Add target="_blank" to external links and title attributes to images
-            // Parse as DOM to safely manipulate
-            const tempDiv = document.createElement('div');
-            tempDiv.innerHTML = html;
-            
-            // Find all links
-            const links = tempDiv.querySelectorAll('a');
-            links.forEach(link => {
-                const href = link.getAttribute('href');
-                if (href && typeof href === 'string') {
-                    // Check if it's an external link
-                    const isExternal = href.indexOf('http://') === 0 || 
-                                      href.indexOf('https://') === 0 || 
-                                      href.indexOf('//') === 0;
-                    
-                    if (isExternal) {
-                        link.setAttribute('target', '_blank');
-                        link.setAttribute('rel', 'noopener noreferrer');
-                    }
-                }
-            });
-            
-            // Find all images and transform paths for display
-            // Also convert non-image media (audio, video, PDF) to appropriate elements
-            const images = tempDiv.querySelectorAll('img');
-            images.forEach(img => {
-                // Extract Obsidian-style size spec from standard-markdown alt.
-                // Wikilink images already had their size applied above and their
-                // alt cleaned, so calling this again is a no-op for them.
-                // See wikilink handler comment above about why we set inline style
-                // in addition to the width/height attributes.
-                const rawAlt = img.getAttribute('alt') || '';
-                const spec = parseImageSizeSpec(rawAlt);
-                if (spec.width && !img.hasAttribute('width')) {
-                    img.setAttribute('width', String(spec.width));
-                    img.style.width = spec.width + 'px';
-                }
-                if (spec.height && !img.hasAttribute('height')) {
-                    img.setAttribute('height', String(spec.height));
-                    img.style.height = spec.height + 'px';
-                }
-                if (spec.alt !== rawAlt) {
-                    img.setAttribute('alt', spec.alt);
-                }
+            // Cache immediately so the getter returns the new content
+            this._cachedRenderedHTML = html;
+            this._lastRenderedContent = this.noteContent;
+            this._lastRenderedNote = this.currentNote;
 
-                let src = img.getAttribute('src');
-                if (src) {
-                    const isExternal = src.startsWith('http://') || src.startsWith('https://') || src.startsWith('//');
-                    const isLocal = !isExternal && !src.startsWith('data:');
-                    
-                    // Transform relative paths to /api/media/ for serving
-                    if (isLocal && !src.startsWith('/api/media/')) {
-                        const vaultRelative = self.currentNote
-                            ? self.resolveMarkdownMediaPathForNote(self.currentNote, src)
-                            : src.split('#')[0].split('?')[0];
-                        const encodedPath = self.encodeVaultRelativePathForMediaApi(vaultRelative);
-                        src = `/api/media/${encodedPath}`;
-                        img.setAttribute('src', src);
-                    }
-                    
-                    // Check if this is non-image media and convert to appropriate element
-                    const mediaType = self.getMediaType(src);
-                    const altText = img.getAttribute('alt') || src.split('/').pop().replace(/\.[^/.]+$/, '');
-                    const safeAlt = altText.replace(/"/g, '&quot;');
-                    
-                    // Only convert LOCAL media to embedded elements (security)
-                    // External non-image media gets styled links instead
-                    if (isLocal || src.startsWith('/api/media/')) {
-                        if (mediaType === 'audio') {
-                            const wrapper = document.createElement('div');
-                            wrapper.className = 'media-embed media-audio';
-                            wrapper.innerHTML = `<audio controls preload="none" src="${src}" title="${safeAlt}"></audio><span class="media-caption">${safeAlt}</span>`;
-                            img.replaceWith(wrapper);
-                            return;
-                        } else if (mediaType === 'video') {
-                            const wrapper = document.createElement('div');
-                            wrapper.className = 'media-embed media-video';
-                            wrapper.innerHTML = `<video controls preload="none" poster="" src="${src}" title="${safeAlt}"></video>`;
-                            img.replaceWith(wrapper);
-                            return;
-                        } else if (mediaType === 'document') {
-                            // Local PDFs: show iframe preview
-                            const wrapper = document.createElement('div');
-                            wrapper.className = 'media-embed media-pdf';
-                            wrapper.innerHTML = `<iframe src="${src}" title="${safeAlt}"></iframe>`;
-                            img.replaceWith(wrapper);
-                            return;
-                        }
-                    } else if (isExternal && mediaType === 'document') {
-                        // External PDFs: styled link (opens in new tab)
-                        const link = document.createElement('a');
-                        link.href = src;
-                        link.target = '_blank';
-                        link.rel = 'noopener noreferrer';
-                        link.className = 'pdf-link';
-                        link.title = `Open ${safeAlt}`;
-                        link.innerHTML = '<span class="pdf-link-content">'
-                            + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
-                            + '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>'
-                            + '</svg> ' + safeAlt + '</span><span class="pdf-link-note">Opens in new tab</span>';
-                        img.replaceWith(link);
-                        return;
-                    }
-                    // External audio/video: leave as broken image for security
-                }
-                
-                // For regular images, set title attribute
-                const altText = img.getAttribute('alt');
-                if (altText) {
-                    img.setAttribute('title', altText);
-                }
-            });
+            // Schedule async post-processing (MathJax, Mermaid, syntax highlighting, video)
+            this.schedulePreviewPostProcessing();
 
-            // Upgrade PDF sentinels emitted by the wiki-embed pre-processor.
-            // Must run AFTER DOMPurify because iframes are stripped by the sanitizer.
-            tempDiv.querySelectorAll('span.md-pdf-embed').forEach(span => {
-                const src = span.dataset.src || '';
-                const alt = span.dataset.alt || '';
-                if (!src) return;
-                const safeAlt = alt.replace(/"/g, '&quot;');
-                const wrapper = document.createElement('div');
-                wrapper.className = 'media-embed media-pdf';
-                wrapper.innerHTML = `<iframe src="${src}" title="${safeAlt}"></iframe>`;
-                span.replaceWith(wrapper);
-            });
+            return html;
+        },
 
-            // marked renders these disabled, and a disabled input fires no click event.
-            // The index is how a click finds its line, so only trust it when both sides
-            // counted the same items; otherwise leave the boxes read-only.
-            const taskBoxes = tempDiv.querySelectorAll('input[type="checkbox"]');
-            if (taskBoxes.length && taskBoxes.length === this._scanTaskLines(this.noteContent).length) {
-                taskBoxes.forEach((box, i) => {
-                    box.removeAttribute('disabled');
-                    box.setAttribute('data-task-index', String(i));
-                });
-            }
-
-            // Landmark scroll-sync anchors. Stamps `data-source-line` on the DOM
-            // elements corresponding to block-level constructs whose source line
-            // can be determined from the raw editor content (headings, images,
-            // tables, code fences, hr, block math). Used by setupScrollSync() to
-            // interpolate the editor<->preview mapping accurately across images
-            // and other tall blocks. Runs after all other DOM rewrites so the
-            // final element identity is what gets tagged.
-            try {
-                const landmarks = this._scanSourceLandmarks(this.noteContent);
-                this._annotateSourceAnchors(tempDiv, landmarks);
-            } catch (e) {
-                // Any anchor-building failure must not break rendering. Anchors
-                // are an enhancement, not required for content display.
-                console.warn('scroll-anchor annotation failed:', e);
-            }
-
-            html = tempDiv.innerHTML;
-            
+        // Schedules the async DOM work that must run after the HTML is in the DOM.
+        // Separate from renderPreview() so it can be called independently if needed.
+        schedulePreviewPostProcessing() {
             // Debounced MathJax rendering (avoid re-running on every keystroke)
             if (this._mathDebounceTimeout) clearTimeout(this._mathDebounceTimeout);
             this._mathDebounceTimeout = setTimeout(() => this.typesetMath(), 300);
-            
+
             // Debounced Mermaid rendering
             if (this._mermaidDebounceTimeout) clearTimeout(this._mermaidDebounceTimeout);
             this._mermaidDebounceTimeout = setTimeout(() => this.renderMermaid(), 300);
-            
+
             // Apply syntax highlighting and add copy buttons to code blocks
             setTimeout(() => {
-                // Use cached reference if available, otherwise query
                 const previewEl = this._domCache.previewContent || document.querySelector('.markdown-preview');
                 if (previewEl) {
-                    // Exclude code blocks that are rendered by other tools (e.g., Mermaid diagrams)
-                    // Note: MathJax uses $$...$$ delimiters (not code blocks) so no exclusion needed
                     previewEl.querySelectorAll('pre code:not(.language-mermaid)').forEach((block) => {
-                        // Apply syntax highlighting
                         if (!block.classList.contains('hljs')) {
                             hljs.highlightElement(block);
                         }
-                        
-                        // Add copy button if not already present
                         const pre = block.parentElement;
                         if (pre && !pre.querySelector('.copy-code-button')) {
                             this.addCopyButtonToCodeBlock(pre);
                         }
                     });
-                    
-                    // Enable video metadata loading (for first frame preview)
-                    // Track by source URL to prevent duplicate requests on re-renders
+
                     if (!this._initializedVideoSources) this._initializedVideoSources = new Set();
                     previewEl.querySelectorAll('video[preload="none"]').forEach((video) => {
                         const src = video.getAttribute('src');
@@ -913,13 +456,6 @@ export function createPreview() {
                     });
                 }
             }, 0);
-            
-            // Cache the result for performance
-            this._lastRenderedContent = this.noteContent;
-            this._lastRenderedNote = this.currentNote;
-            this._cachedRenderedHTML = html;
-            
-            return html;
         },
         
         // Add copy button to code block

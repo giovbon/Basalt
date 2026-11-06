@@ -210,6 +210,12 @@ export function createNotes() {
                         
                         // Scroll note into view in sidebar if needed
                         this.scrollNoteIntoView(notePath);
+                        
+                        // Render syntax highlighting overlay (if enabled)
+                        this.updateSyntaxHighlight();
+                        
+                        // Render markdown preview
+                        this.renderPreview();
                     });
                 });
                 

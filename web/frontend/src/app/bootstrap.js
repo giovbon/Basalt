@@ -147,6 +147,13 @@ export function createBootstrap() {
                         }, 50);
                     });
                 }
+                // Re-render the markdown preview when content changes
+                this.renderPreview();
+            });
+            
+            // Re-render preview when the note changes (e.g., user navigates)
+            this.$watch('currentNote', () => {
+                this.renderPreview();
             });
             
             // Watch tags panel expanded state and save to localStorage

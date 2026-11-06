@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -65,55 +66,149 @@ func (fm Frontmatter) Len() int { return len(fm) }
 
 var headingRE = regexp.MustCompile(`^(#{1,6})\s+(.+)$`)
 
-// splitFrontmatter returns the lines between the opening "---" and the first
-// closing "---" of content's leading frontmatter block. ok is false when the
-// note has no (complete) frontmatter.
-func splitFrontmatter(content string) (fmLines []string, ok bool) {
+// frontmatterBounds locates the leading YAML block in lines (already split on
+// "\n"). Blank lines before the opening delimiter and a UTF-8 BOM are
+// tolerated, matching the other frontmatter readers. openIdx/closeIdx are the
+// indices of the opening and closing "---" lines.
+func frontmatterBounds(lines []string) (openIdx, closeIdx int, found bool) {
+	trimmedLine := func(line string) string {
+		return strings.TrimSpace(strings.TrimPrefix(line, "\ufeff"))
+	}
+
+	openIdx = 0
+	for openIdx < len(lines) && trimmedLine(lines[openIdx]) == "" {
+		openIdx++
+	}
+	if openIdx == len(lines) || trimmedLine(lines[openIdx]) != "---" {
+		return 0, 0, false
+	}
+	for i := openIdx + 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "---" {
+			return openIdx, i, true
+		}
+	}
+	return 0, 0, false
+}
+
+// splitFrontmatter returns the YAML lines between the opening and closing
+// "---", plus the note body that follows the block. ok is false when the note
+// has no (complete) frontmatter. This is the single scanner used by tag
+// parsing, frontmatter decoding, export and the outline extractor.
+func splitFrontmatter(content string) (fmLines []string, body string, ok bool) {
 	// Windows editors often leave a BOM in front; it is not whitespace, so
 	// TrimSpace alone would make the first-line check fail.
 	content = strings.TrimPrefix(content, "\ufeff")
 	trimmed := strings.TrimSpace(content)
-	if !strings.HasPrefix(trimmed, "---") {
-		return nil, false
-	}
 	lines := strings.Split(trimmed, "\n")
-	if strings.TrimSpace(lines[0]) != "---" {
-		return nil, false
+
+	open, close, found := frontmatterBounds(lines)
+	if !found {
+		return nil, "", false
 	}
-	for i := 1; i < len(lines); i++ {
-		if strings.TrimSpace(lines[i]) == "---" {
-			return lines[1:i], true
-		}
-	}
-	return nil, false
+	return lines[open+1 : close], strings.Join(lines[close+1:], "\n"), true
 }
 
 // StripFrontmatter removes a note's leading YAML block (used by HTML export,
 // which renders the body only). Returns content unchanged when there is no
 // complete frontmatter.
 func StripFrontmatter(content string) string {
-	stripped := strings.TrimPrefix(content, "\ufeff")
-	trimmed := strings.TrimSpace(stripped)
-	if !strings.HasPrefix(trimmed, "---") {
-		return content
-	}
-	lines := strings.Split(trimmed, "\n")
-	if strings.TrimSpace(lines[0]) != "---" {
-		return content
-	}
-	for i := 1; i < len(lines); i++ {
-		if strings.TrimSpace(lines[i]) == "---" {
-			return strings.Join(lines[i+1:], "\n")
-		}
+	if _, body, ok := splitFrontmatter(content); ok {
+		return body
 	}
 	return content
+}
+
+// ParseTags extracts tags from a note's YAML frontmatter.
+//
+// Supported shapes (key matched case-insensitively, "tags" or "tag"):
+//
+//	tags: [a, b]
+//	tags: a
+//	tags:
+//	  - a
+//
+// It tolerates a UTF-8 BOM and blank lines before the opening "---" (common
+// in files saved by Windows editors) and strips quotes around values, so the
+// same note parses identically no matter which editor wrote it.
+func ParseTags(content string) []string {
+	fmLines, _, ok := splitFrontmatter(content)
+	if !ok {
+		return []string{}
+	}
+
+	var rawTags []string
+	inTagsList := false
+
+	// Normalize one raw tag value: trim, drop surrounding quotes, lowercase.
+	cleanTag := func(t string) string {
+		t = strings.ToLower(strings.TrimSpace(t))
+		if len(t) >= 2 {
+			if q := t[0]; (q == '"' || q == '\'') && t[len(t)-1] == q {
+				t = strings.TrimSpace(t[1 : len(t)-1])
+			}
+		}
+		return t
+	}
+
+	for _, line := range fmLines {
+		stripped := strings.TrimSpace(line)
+
+		if !inTagsList {
+			key, rest, hasKey := strings.Cut(stripped, ":")
+			if !hasKey {
+				continue
+			}
+			key = strings.ToLower(strings.TrimSpace(key))
+			if key != "tags" && key != "tag" {
+				continue
+			}
+
+			rest = strings.TrimSpace(rest)
+			if strings.HasPrefix(rest, "[") && strings.HasSuffix(rest, "]") {
+				for _, p := range strings.Split(rest[1:len(rest)-1], ",") {
+					if t := cleanTag(p); t != "" {
+						rawTags = append(rawTags, t)
+					}
+				}
+				break
+			} else if rest != "" {
+				if t := cleanTag(rest); t != "" {
+					rawTags = append(rawTags, t)
+				}
+				break
+			}
+			inTagsList = true
+			continue
+		}
+
+		// Inside a multiline "tags:" block.
+		if strings.HasPrefix(stripped, "-") {
+			if t := cleanTag(strings.TrimPrefix(stripped, "-")); t != "" {
+				rawTags = append(rawTags, t)
+			}
+		} else if stripped != "" && !strings.HasPrefix(stripped, "#") {
+			break
+		}
+	}
+
+	// Unique & sort
+	tagMap := make(map[string]struct{})
+	for _, t := range rawTags {
+		tagMap[t] = struct{}{}
+	}
+	result := make([]string, 0, len(tagMap))
+	for t := range tagMap {
+		result = append(result, t)
+	}
+	sort.Strings(result)
+	return result
 }
 
 // ParseFrontmatter decodes the leading YAML block of a note, preserving the
 // order in which keys were declared. Returns nil when the note has no
 // frontmatter, it is empty, or it does not parse.
 func ParseFrontmatter(content string) Frontmatter {
-	fmLines, ok := splitFrontmatter(content)
+	fmLines, _, ok := splitFrontmatter(content)
 	if !ok || len(fmLines) == 0 {
 		return nil
 	}
@@ -192,20 +287,18 @@ func ExtractOutline(content string) []OutlineItem {
 
 	lines := strings.Split(content, "\n")
 	slugCounts := map[string]int{}
-	inFrontmatter := false
 	inCodeBlock := false
 
-	for i, line := range lines {
-		if i == 0 && strings.TrimSpace(line) == "---" {
-			inFrontmatter = true
-			continue
-		}
-		if inFrontmatter {
-			if strings.TrimSpace(line) == "---" {
-				inFrontmatter = false
-			}
-			continue
-		}
+	// Start after the frontmatter block when there is one. The indices stay
+	// relative to the original content so OutlineItem.Line keeps matching the
+	// editor's line numbers.
+	start := 0
+	if _, closeIdx, ok := frontmatterBounds(lines); ok {
+		start = closeIdx + 1
+	}
+
+	for i := start; i < len(lines); i++ {
+		line := lines[i]
 
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
