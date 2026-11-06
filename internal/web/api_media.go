@@ -206,17 +206,8 @@ func (h *MediaHandler) MoveMedia(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	success, errMsg := h.vault.MoveNote(payload.OldPath, payload.NewPath)
-	if !success {
-		status := http.StatusInternalServerError
-		if strings.Contains(errMsg, "Source note does not exist") {
-			status = http.StatusNotFound
-		} else if strings.Contains(errMsg, "already exists at") {
-			status = http.StatusConflict
-		} else if strings.Contains(errMsg, "Invalid") {
-			status = http.StatusBadRequest
-		}
-		RespondError(w, status, errMsg)
+	if err := h.vault.MoveNote(payload.OldPath, payload.NewPath); err != nil {
+		RespondError(w, statusForVaultError(err), err.Error())
 		return
 	}
 

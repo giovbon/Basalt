@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -370,8 +371,10 @@ func TestDeleteFolderRootRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if v.DeleteFolder(".") {
-		t.Error("DeleteFolder('.') = true, want false")
+	if err := v.DeleteFolder("."); err == nil {
+		t.Error("DeleteFolder('.') = nil, want an error")
+	} else if !errors.Is(err, ErrInvalidPath) {
+		t.Errorf("DeleteFolder('.') error = %v, want ErrInvalidPath", err)
 	}
 	if _, err := v.GetNoteContent("keep.md"); err != nil {
 		t.Errorf("note at vault root was deleted: %v", err)

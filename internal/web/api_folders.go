@@ -74,17 +74,8 @@ func (h *FoldersHandler) MoveFolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	success, errMsg := h.vault.MoveFolder(payload.OldPath, payload.NewPath)
-	if !success {
-		status := http.StatusInternalServerError
-		if strings.Contains(errMsg, "Source folder does not exist") {
-			status = http.StatusNotFound
-		} else if strings.Contains(errMsg, "already exists at") {
-			status = http.StatusConflict
-		} else if strings.Contains(errMsg, "Invalid") {
-			status = http.StatusBadRequest
-		}
-		RespondError(w, status, errMsg)
+	if err := h.vault.MoveFolder(payload.OldPath, payload.NewPath); err != nil {
+		RespondError(w, statusForVaultError(err), err.Error())
 		return
 	}
 
@@ -108,17 +99,8 @@ func (h *FoldersHandler) RenameFolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	success, errMsg := h.vault.MoveFolder(payload.OldPath, payload.NewPath)
-	if !success {
-		status := http.StatusInternalServerError
-		if strings.Contains(errMsg, "Source folder does not exist") {
-			status = http.StatusNotFound
-		} else if strings.Contains(errMsg, "already exists at") {
-			status = http.StatusConflict
-		} else if strings.Contains(errMsg, "Invalid") {
-			status = http.StatusBadRequest
-		}
-		RespondError(w, status, errMsg)
+	if err := h.vault.MoveFolder(payload.OldPath, payload.NewPath); err != nil {
+		RespondError(w, statusForVaultError(err), err.Error())
 		return
 	}
 
@@ -137,8 +119,8 @@ func (h *FoldersHandler) DeleteFolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.vault.DeleteFolder(folderPath) {
-		RespondError(w, http.StatusInternalServerError, "Failed to delete folder")
+	if err := h.vault.DeleteFolder(folderPath); err != nil {
+		RespondError(w, statusForVaultError(err), err.Error())
 		return
 	}
 

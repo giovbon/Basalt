@@ -177,18 +177,7 @@ func (h *TagsSearchHandler) SearchNotes(w http.ResponseWriter, r *http.Request) 
 	// Notes outside the requested page are still counted (so "total" and
 	// "has_more" stay exact) but never read or snippet-extracted: with a big
 	// vault the cost is one pass over the folded text, not N file reads.
-	pageStart, pageEnd := 0, int(^uint(0)>>1)
-	if limit != nil {
-		lim := *limit
-		if lim < 0 {
-			lim = 0
-		}
-		off := offset
-		if off < 0 {
-			off = 0
-		}
-		pageStart, pageEnd = off, off+lim
-	}
+	pageStart, pageEnd := pageWindow(limit, offset)
 
 	results := []search.SearchResult{}
 	matched := 0

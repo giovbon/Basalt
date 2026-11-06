@@ -39,6 +39,9 @@ func ParsePaginationParams(r *http.Request) (*int, int) {
 	var limit *int
 	if limitStr := query.Get("limit"); limitStr != "" {
 		if val, err := strconv.Atoi(limitStr); err == nil && val >= 0 {
+			if val > MaxPageSize {
+				val = MaxPageSize
+			}
 			limit = &val
 		}
 	}

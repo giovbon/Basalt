@@ -29,6 +29,23 @@ jobs:
       - name: Go test
         run: go test ./...
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Frontend tests
+        run: npm test --prefix web/frontend
+
+      - name: Check generated frontend artifacts
+        run: |
+          bash build-js.sh
+          bash build-tailwind.sh
+          if ! git diff --exit-code -- web/frontend/app.js web/frontend/app.js.map web/frontend/tailwind.css; then
+            echo "::error::Generated frontend artifacts are stale. Run ./build-js.sh and ./build-tailwind.sh and commit the result."
+            exit 1
+          fi
+
   build-and-push:
     needs: test
     runs-on: ubuntu-latest

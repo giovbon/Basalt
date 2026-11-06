@@ -165,3 +165,40 @@ func TestPaginate(t *testing.T) {
 		})
 	}
 }
+
+// MaxInt used to make offset+limit overflow to MinInt and panic in the slice
+// expression. The limit must be clamped before any arithmetic.
+func TestPaginateClampsOverflowingLimit(t *testing.T) {
+	items := []string{"a", "b", "c"}
+	maxInt := int(^uint(0) >> 1)
+
+	got := Paginate(items, ptrInt(maxInt), 1)
+
+	if !reflect.DeepEqual(got.Items, []string{"b", "c"}) {
+		t.Errorf("Items = %v, want [b c]", got.Items)
+	}
+	if got.Pagination == nil {
+		t.Fatal("Pagination = nil")
+	}
+	if got.Pagination.Limit == nil || *got.Pagination.Limit != MaxPageSize {
+		t.Errorf("Limit = %v, want %d", got.Pagination.Limit, MaxPageSize)
+	}
+	if got.Pagination.HasMore {
+		t.Error("HasMore = true, want false")
+	}
+}
+
+func TestPageWindowClampsOverflowingLimit(t *testing.T) {
+	maxInt := int(^uint(0) >> 1)
+
+	start, end := pageWindow(ptrInt(maxInt), 5)
+	if start != 5 || end != 5+MaxPageSize {
+		t.Errorf("pageWindow = [%d,%d), want [5,%d)", start, end, 5+MaxPageSize)
+	}
+
+	// An offset near MaxInt must saturate instead of wrapping negative.
+	start, end = pageWindow(ptrInt(10), maxInt-5)
+	if start != maxInt-5 || end != maxInt {
+		t.Errorf("pageWindow = [%d,%d), want [%d,%d)", start, end, maxInt-5, maxInt)
+	}
+}

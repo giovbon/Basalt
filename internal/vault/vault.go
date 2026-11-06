@@ -713,7 +713,7 @@ func (v *Vault) DeleteNote(notePath string) bool {
 	return true
 }
 
-func (v *Vault) MoveNote(oldPath, newPath string) (bool, string) {
+func (v *Vault) MoveNote(oldPath, newPath string) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
@@ -721,36 +721,36 @@ func (v *Vault) MoveNote(oldPath, newPath string) (bool, string) {
 	newFull := v.FullPath(newPath)
 
 	if !v.ValidatePathSecurity(oldFull) {
-		return false, "Invalid source path"
+		return invalidPathError("Invalid source path")
 	}
 	if !v.ValidatePathSecurity(newFull) {
-		return false, "Invalid destination path"
+		return invalidPathError("Invalid destination path")
 	}
 	if _, err := os.Stat(oldFull); err != nil {
-		return false, fmt.Sprintf("Source note does not exist: %s", oldPath)
+		return sourceNotFoundError(fmt.Sprintf("Source note does not exist: %s", oldPath))
 	}
 	if _, err := os.Stat(newFull); err == nil {
-		return false, fmt.Sprintf("A note already exists at: %s", newPath)
+		return destinationExistsError(fmt.Sprintf("A note already exists at: %s", newPath))
 	}
 
 	conflict := v.NoteNameConflict(newPath)
 	if conflict != "" && strings.ToLower(NormalizedRelPath(conflict)) != strings.ToLower(NormalizedRelPath(oldPath)) {
-		return false, fmt.Sprintf("A note already exists at: %s", conflict)
+		return destinationExistsError(fmt.Sprintf("A note already exists at: %s", conflict))
 	}
 
 	if err := os.MkdirAll(filepath.Dir(newFull), 0755); err != nil {
-		return false, fmt.Sprintf("Failed to move file: %s", err.Error())
+		return operationFailedError(fmt.Sprintf("Failed to move file: %s", err.Error()))
 	}
 
 	if err := os.Rename(oldFull, newFull); err != nil {
-		return false, fmt.Sprintf("Failed to move file: %s", err.Error())
+		return operationFailedError(fmt.Sprintf("Failed to move file: %s", err.Error()))
 	}
 	v.idx.drop(NormalizedRelPath(oldPath))
 	v.idx.drop(NormalizedRelPath(newPath))
 	// Paths changed everywhere under the folder: cheaper to walk once than to
 	// rewrite the snapshot.
 	v.scanCache.invalidate()
-	return true, ""
+	return nil
 }
 
 func (v *Vault) CreateFolder(folderPath string) bool {
@@ -768,7 +768,7 @@ func (v *Vault) CreateFolder(folderPath string) bool {
 	return true
 }
 
-func (v *Vault) MoveFolder(oldPath, newPath string) (bool, string) {
+func (v *Vault) MoveFolder(oldPath, newPath string) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
@@ -776,48 +776,48 @@ func (v *Vault) MoveFolder(oldPath, newPath string) (bool, string) {
 	newFull := v.FullPath(newPath)
 
 	if !v.ValidatePathSecurity(oldFull) {
-		return false, "Invalid source path"
+		return invalidPathError("Invalid source path")
 	}
 	if !v.ValidatePathSecurity(newFull) {
-		return false, "Invalid destination path"
+		return invalidPathError("Invalid destination path")
 	}
 	info, err := os.Stat(oldFull)
 	if err != nil || !info.IsDir() {
-		return false, fmt.Sprintf("Source folder does not exist: %s", oldPath)
+		return sourceNotFoundError(fmt.Sprintf("Source folder does not exist: %s", oldPath))
 	}
 	if _, err := os.Stat(newFull); err == nil {
-		return false, fmt.Sprintf("A folder already exists at: %s", newPath)
+		return destinationExistsError(fmt.Sprintf("A folder already exists at: %s", newPath))
 	}
 
 	conflict := v.FolderNameConflict(newPath)
 	if conflict != "" && strings.ToLower(NormalizedRelPath(conflict)) != strings.ToLower(NormalizedRelPath(oldPath)) {
-		return false, fmt.Sprintf("A folder already exists at: %s", conflict)
+		return destinationExistsError(fmt.Sprintf("A folder already exists at: %s", conflict))
 	}
 
 	if err := os.MkdirAll(filepath.Dir(newFull), 0755); err != nil {
-		return false, fmt.Sprintf("Failed to move folder: %s", err.Error())
+		return operationFailedError(fmt.Sprintf("Failed to move folder: %s", err.Error()))
 	}
 
 	if err := os.Rename(oldFull, newFull); err != nil {
-		return false, fmt.Sprintf("Failed to move folder: %s", err.Error())
+		return operationFailedError(fmt.Sprintf("Failed to move folder: %s", err.Error()))
 	}
 	v.idx.dropPrefix(NormalizedRelPath(oldPath))
 	v.scanCache.invalidate()
-	return true, ""
+	return nil
 }
 
-func (v *Vault) DeleteFolder(folderPath string) bool {
+func (v *Vault) DeleteFolder(folderPath string) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
 	clean := filepath.Clean(strings.ReplaceAll(folderPath, "\\", "/"))
 	if folderPath == "" || clean == "." || clean == "/" {
-		return false
+		return invalidPathError("Invalid folder path")
 	}
 
 	fullPath := v.FullPath(folderPath)
 	if !v.ValidatePathSecurity(fullPath) {
-		return false
+		return invalidPathError("Invalid folder path")
 	}
 
 	// Never remove the vault root itself: a path such as "sub/.." (or one that
@@ -827,21 +827,21 @@ func (v *Vault) DeleteFolder(folderPath string) bool {
 	if absFull, err := filepath.Abs(fullPath); err == nil {
 		if absBase, err := filepath.Abs(v.notesDir); err == nil {
 			if filepath.Clean(absFull) == filepath.Clean(absBase) {
-				return false
+				return invalidPathError("Invalid folder path")
 			}
 		}
 	}
 
 	info, err := os.Stat(fullPath)
 	if err != nil || !info.IsDir() {
-		return false
+		return sourceNotFoundError(fmt.Sprintf("Folder does not exist: %s", folderPath))
 	}
 	if err := os.RemoveAll(fullPath); err != nil {
-		return false
+		return operationFailedError(fmt.Sprintf("Failed to delete folder: %s", err.Error()))
 	}
 	v.idx.dropPrefix(NormalizedRelPath(folderPath))
 	v.scanCache.invalidate()
-	return true
+	return nil
 }
 
 func (v *Vault) ResolveVaultFolder(folderPath string) (string, error) {
